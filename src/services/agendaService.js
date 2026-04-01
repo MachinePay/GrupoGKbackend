@@ -230,7 +230,7 @@ async function deleteAgendaItem(agendaId) {
 /**
  * Realiza a baixa de um item da agenda criando a movimentacao correspondente.
  * @param {number | string} agendaId Identificador do item.
- * @param {{ contaId: number | string, data?: string, categoria?: string, projetoId?: number | string, subcategoria?: string }} payload Dados complementares da baixa.
+ * @param {{ contaId: number | string, data?: string, categoria?: string, tipoDespesa?: string, projetoId?: number | string, subcategoria?: string }} payload Dados complementares da baixa.
  * @returns {Promise<object>}
  */
 async function settleAgendaItem(agendaId, payload) {
@@ -264,6 +264,7 @@ async function settleAgendaItem(agendaId, payload) {
         tipo: agenda.tipo === "PAGAR" ? "SAIDA" : "ENTRADA",
         valor: agenda.valor.toString(),
         categoria: payload.categoria || undefined,
+        tipoDespesa: payload.tipoDespesa || undefined,
         referencia: agenda.descricao
           ? `${agenda.titulo} - ${agenda.descricao}`
           : agenda.titulo,

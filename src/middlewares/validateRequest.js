@@ -9,6 +9,31 @@ const {
 } = require("@prisma/client");
 const AppError = require("./appError");
 
+const TIPOS_DESPESA = [
+  "DESPESAS_ADMINISTRATIVAS",
+  "RETIRADA_SOCIOS",
+  "FOLHA_PAGAMENTO",
+  "DESPESAS_DIVERSAS",
+  "GASOLINA",
+  "MATERIAL_ESCRITORIO",
+  "MATERIAL_ESTOQUE_EMBALAGENS",
+  "CUSTOS_OPERACIONAIS",
+];
+
+const TIPOS_DESPESA_CUSTO_FIXO = [
+  "DESPESAS_ADMINISTRATIVAS",
+  "RETIRADA_SOCIOS",
+  "FOLHA_PAGAMENTO",
+];
+
+const TIPOS_DESPESA_CUSTO_VARIAVEL = [
+  "DESPESAS_DIVERSAS",
+  "GASOLINA",
+  "MATERIAL_ESCRITORIO",
+  "MATERIAL_ESTOQUE_EMBALAGENS",
+  "CUSTOS_OPERACIONAIS",
+];
+
 /**
  * Verifica se uma string representa data valida.
  * @param {string | undefined | null} value Valor da data.
@@ -33,6 +58,7 @@ function validateCreateMovimentacao(req, _res, next) {
     status,
     empresaId,
     categoria,
+    tipoDespesa,
     subcategoria,
     canalOrigem,
     centroOperacao,
@@ -65,6 +91,61 @@ function validateCreateMovimentacao(req, _res, next) {
 
   if (categoria && !Object.values(MovimentacaoCategoria).includes(categoria)) {
     return next(new AppError("Campo categoria invalido.", 400));
+  }
+
+  if (tipoDespesa && !TIPOS_DESPESA.includes(tipoDespesa)) {
+    return next(new AppError("Campo tipoDespesa invalido.", 400));
+  }
+
+  if (categoria === "CUSTO_FIXO" && !tipoDespesa) {
+    return next(
+      new AppError(
+        "Campo tipoDespesa obrigatorio para categoria CUSTO_FIXO.",
+        400,
+      ),
+    );
+  }
+
+  if (categoria === "CUSTO_VARIAVEL" && !tipoDespesa) {
+    return next(
+      new AppError(
+        "Campo tipoDespesa obrigatorio para categoria CUSTO_VARIAVEL.",
+        400,
+      ),
+    );
+  }
+
+  if (
+    categoria === "CUSTO_FIXO" &&
+    tipoDespesa &&
+    !TIPOS_DESPESA_CUSTO_FIXO.includes(tipoDespesa)
+  ) {
+    return next(
+      new AppError("tipoDespesa invalido para categoria CUSTO_FIXO.", 400),
+    );
+  }
+
+  if (
+    categoria === "CUSTO_VARIAVEL" &&
+    tipoDespesa &&
+    !TIPOS_DESPESA_CUSTO_VARIAVEL.includes(tipoDespesa)
+  ) {
+    return next(
+      new AppError("tipoDespesa invalido para categoria CUSTO_VARIAVEL.", 400),
+    );
+  }
+
+  if (
+    categoria !== "CUSTO_FIXO" &&
+    categoria !== "CUSTO_VARIAVEL" &&
+    tipoDespesa
+  ) {
+    return next(
+      new AppError(
+        "Campo tipoDespesa so pode ser usado com CUSTO_FIXO ou CUSTO_VARIAVEL.",
+        400,
+      ),
+    );
   }
 
   if (
@@ -111,6 +192,7 @@ function validateMovimentacoesQuery(req, _res, next) {
     empresaId,
     contaId,
     categoria,
+    tipoDespesa,
     tipo,
     status,
     canalOrigem,
@@ -131,6 +213,10 @@ function validateMovimentacoesQuery(req, _res, next) {
 
   if (categoria && !Object.values(MovimentacaoCategoria).includes(categoria)) {
     return next(new AppError("Parametro categoria invalido.", 400));
+  }
+
+  if (tipoDespesa && !TIPOS_DESPESA.includes(tipoDespesa)) {
+    return next(new AppError("Parametro tipoDespesa invalido.", 400));
   }
 
   if (tipo && !Object.values(MovimentacaoTipo).includes(tipo)) {
@@ -386,7 +472,8 @@ function validateCreateAgendaItem(req, _res, next) {
  * @returns {void}
  */
 function validateAgendaSettlement(req, _res, next) {
-  const { contaId, data, projetoId, subcategoria, categoria } = req.body;
+  const { contaId, data, projetoId, subcategoria, categoria, tipoDespesa } =
+    req.body;
 
   if (!contaId || Number.isNaN(Number(contaId))) {
     return next(
@@ -408,6 +495,28 @@ function validateAgendaSettlement(req, _res, next) {
 
   if (categoria && !Object.values(MovimentacaoCategoria).includes(categoria)) {
     return next(new AppError("Campo categoria invalido.", 400));
+  }
+
+  if (tipoDespesa && !TIPOS_DESPESA.includes(tipoDespesa)) {
+    return next(new AppError("Campo tipoDespesa invalido.", 400));
+  }
+
+  if (categoria === "CUSTO_FIXO" && !tipoDespesa) {
+    return next(
+      new AppError(
+        "Campo tipoDespesa obrigatorio para categoria CUSTO_FIXO.",
+        400,
+      ),
+    );
+  }
+
+  if (categoria === "CUSTO_VARIAVEL" && !tipoDespesa) {
+    return next(
+      new AppError(
+        "Campo tipoDespesa obrigatorio para categoria CUSTO_VARIAVEL.",
+        400,
+      ),
+    );
   }
 
   if (

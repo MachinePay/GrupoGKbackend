@@ -2,6 +2,20 @@ const { Prisma, MovimentacaoTipo } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 
+const TIPOS_DESPESA_CUSTO_FIXO = [
+  "DESPESAS_ADMINISTRATIVAS",
+  "RETIRADA_SOCIOS",
+  "FOLHA_PAGAMENTO",
+];
+
+const TIPOS_DESPESA_CUSTO_VARIAVEL = [
+  "DESPESAS_DIVERSAS",
+  "GASOLINA",
+  "MATERIAL_ESCRITORIO",
+  "MATERIAL_ESTOQUE_EMBALAGENS",
+  "CUSTOS_OPERACIONAIS",
+];
+
 /**
  * Converte um valor numerico para Decimal do Prisma.
  * @param {number | string} value Valor bruto.
@@ -90,7 +104,7 @@ function validateAccountsByType(payload) {
  * @returns {Promise<void>}
  */
 async function validateBusinessRules(empresa, payload, client = prisma) {
-  const { projetoId, subcategoria } = payload;
+  const { projetoId, subcategoria, categoria, tipoDespesa } = payload;
 
   if (empresa.nome === "MaisQuiosque" && !projetoId) {
     throw new AppError(
@@ -127,6 +141,43 @@ async function validateBusinessRules(empresa, payload, client = prisma) {
   if (empresa.nome !== "GiraKids" && subcategoria) {
     throw new AppError(
       "Subcategoria so pode ser usada em movimentacoes da GiraKids.",
+      400,
+    );
+  }
+
+  if (categoria === "CUSTO_FIXO") {
+    if (!tipoDespesa) {
+      throw new AppError(
+        "Movimentacoes com CUSTO_FIXO exigem tipoDespesa.",
+        400,
+      );
+    }
+
+    if (!TIPOS_DESPESA_CUSTO_FIXO.includes(tipoDespesa)) {
+      throw new AppError("tipoDespesa invalido para CUSTO_FIXO.", 400);
+    }
+  }
+
+  if (categoria === "CUSTO_VARIAVEL") {
+    if (!tipoDespesa) {
+      throw new AppError(
+        "Movimentacoes com CUSTO_VARIAVEL exigem tipoDespesa.",
+        400,
+      );
+    }
+
+    if (!TIPOS_DESPESA_CUSTO_VARIAVEL.includes(tipoDespesa)) {
+      throw new AppError("tipoDespesa invalido para CUSTO_VARIAVEL.", 400);
+    }
+  }
+
+  if (
+    categoria !== "CUSTO_FIXO" &&
+    categoria !== "CUSTO_VARIAVEL" &&
+    tipoDespesa
+  ) {
+    throw new AppError(
+      "tipoDespesa so pode ser usado com CUSTO_FIXO ou CUSTO_VARIAVEL.",
       400,
     );
   }
@@ -198,6 +249,7 @@ async function createMovimentacao(payload, options = {}) {
         valor: toDecimal(payload.valor),
         tipo: payload.tipo,
         categoria: payload.categoria || null,
+        tipoDespesa: payload.tipoDespesa || null,
         canalOrigem: payload.canalOrigem?.trim() || null,
         centroOperacao: payload.centroOperacao?.trim() || null,
         referencia: payload.referencia || null,
@@ -234,7 +286,7 @@ async function createMovimentacao(payload, options = {}) {
 
 /**
  * Lista movimentacoes com filtros e paginacao.
- * @param {{ empresaId?: string | number, contaId?: string | number, categoria?: string, referencia?: string, tipo?: string, status?: string, canalOrigem?: string, centroOperacao?: string, dataInicio?: string, dataFim?: string, page?: string | number, limit?: string | number }} filters Filtros opcionais.
+ * @param {{ empresaId?: string | number, contaId?: string | number, categoria?: string, tipoDespesa?: string, referencia?: string, tipo?: string, status?: string, canalOrigem?: string, centroOperacao?: string, dataInicio?: string, dataFim?: string, page?: string | number, limit?: string | number }} filters Filtros opcionais.
  * @returns {Promise<{ items: object[], pagination: { page: number, limit: number, total: number, totalPages: number, hasNextPage: boolean, hasPrevPage: boolean } }>}
  */
 async function listMovimentacoes(filters) {
@@ -255,6 +307,7 @@ async function listMovimentacoes(filters) {
   const where = {
     ...(filters.empresaId ? { empresaId: Number(filters.empresaId) } : {}),
     ...(filters.categoria ? { categoria: filters.categoria } : {}),
+    ...(filters.tipoDespesa ? { tipoDespesa: filters.tipoDespesa } : {}),
     ...(filters.tipo ? { tipo: filters.tipo } : {}),
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.canalOrigem

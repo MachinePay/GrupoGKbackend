@@ -53,6 +53,7 @@ model Movimentacao {
   valor         Decimal                @db.Decimal(14, 2)
   tipo          MovimentacaoTipo
   categoria     MovimentacaoCategoria?
+  tipoDespesa   TipoDespesa?           @map("tipo_despesa")
   canalOrigem   String?                @map("canal_origem")
   centroOperacao String?               @map("centro_operacao")
   referencia    String?
@@ -129,6 +130,17 @@ enum MovimentacaoCategoria {
 enum MovimentacaoStatus {
   PREVISTO
   REALIZADO
+}
+
+enum TipoDespesa {
+  DESPESAS_ADMINISTRATIVAS
+  RETIRADA_SOCIOS
+  FOLHA_PAGAMENTO
+  DESPESAS_DIVERSAS
+  GASOLINA
+  MATERIAL_ESCRITORIO
+  MATERIAL_ESTOQUE_EMBALAGENS
+  CUSTOS_OPERACIONAIS
 }
 
 enum GiraKidsSubcategoria {
