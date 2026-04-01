@@ -80,6 +80,7 @@ model Agenda {
   data       DateTime
   titulo     String
   descricao  String?
+  origem     String?
   valor      Decimal      @db.Decimal(14, 2)
   prioridade String
   status     AgendaStatus
