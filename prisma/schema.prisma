@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Empresa {
+  id             Int             @id @default(autoincrement())
+  nome           String          @unique
+  contasBancarias ContaBancaria[]
+  projetos       Projeto[]
+  movimentacoes  Movimentacao[]
+  agendaItens    Agenda[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model ContaBancaria {
+  id                   Int             @id @default(autoincrement())
+  nome                 String
+  banco                String
+  saldoAtual           Decimal         @default(0) @map("saldo_atual") @db.Decimal(14, 2)
+  empresaId            Int             @map("empresa_id")
+  empresa              Empresa         @relation(fields: [empresaId], references: [id])
+  movimentacoesOrigem  Movimentacao[]  @relation("ContaOrigem")
+  movimentacoesDestino Movimentacao[]  @relation("ContaDestino")
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  @@unique([nome, empresaId])
+  @@map("contas_bancarias")
+}
+
+model Projeto {
+  id            Int            @id @default(autoincrement())
+  nome          String
+  empresaId     Int            @map("empresa_id")
+  empresa       Empresa        @relation(fields: [empresaId], references: [id])
+  movimentacoes Movimentacao[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@unique([nome, empresaId])
+  @@map("projetos")
+}
+
+model Movimentacao {
+  id            Int                    @id @default(autoincrement())
+  data          DateTime
+  valor         Decimal                @db.Decimal(14, 2)
+  tipo          MovimentacaoTipo
+  categoria     MovimentacaoCategoria?
+  canalOrigem   String?                @map("canal_origem")
+  centroOperacao String?               @map("centro_operacao")
+  referencia    String?
+  status        MovimentacaoStatus
+  subcategoria  GiraKidsSubcategoria?
+  empresaId     Int                    @map("empresa_id")
+  projetoId     Int?                   @map("projeto_id")
+  contaOrigemId Int?                   @map("conta_origem_id")
+  contaDestinoId Int?                  @map("conta_destino_id")
+  empresa       Empresa                @relation(fields: [empresaId], references: [id])
+  projeto       Projeto?               @relation(fields: [projetoId], references: [id])
+  contaOrigem   ContaBancaria?         @relation("ContaOrigem", fields: [contaOrigemId], references: [id])
+  contaDestino  ContaBancaria?         @relation("ContaDestino", fields: [contaDestinoId], references: [id])
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+
+  @@index([empresaId, status, tipo])
+  @@index([data])
+  @@map("movimentacoes")
+}
+
+model Agenda {
+  id         Int          @id @default(autoincrement())
+  data       DateTime
+  titulo     String
+  descricao  String?
+  valor      Decimal      @db.Decimal(14, 2)
+  prioridade String
+  status     AgendaStatus
+  tipo       AgendaTipo
+  empresaId  Int          @map("empresa_id")
+  empresa    Empresa      @relation(fields: [empresaId], references: [id])
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@index([data, status])
+  @@map("agenda")
+}
+
+model Usuario {
+  id           Int          @id @default(autoincrement())
+  nome         String
+  email        String       @unique
+  senhaHash    String       @map("senha_hash")
+  perfil       PerfilUsuario @default(FINANCEIRO)
+  ativo        Boolean      @default(true)
+  ultimoLoginAt DateTime?   @map("ultimo_login_at")
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@map("usuarios")
+}
+
+enum MovimentacaoTipo {
+  ENTRADA
+  SAIDA
+  TRANSFERENCIA
+}
+
+enum MovimentacaoCategoria {
+  PEDIDO
+  COMISSAO
+  RECOLHE_LOJAS
+  BOLETO
+  CHEQUE
+  AJUSTE_SALDO
+  FORNECEDOR
+  CUSTO_FIXO
+  CUSTO_VARIAVEL
+  INVESTIMENTO
+  PREJUIZO
+}
+
+enum MovimentacaoStatus {
+  PREVISTO
+  REALIZADO
+}
+
+enum GiraKidsSubcategoria {
+  TAKE_PARCERIA
+  PELUCIA_PARCERIA
+  OUTROS
+}
+
+enum AgendaStatus {
+  ATRASADO
+  PREVISTO
+  REALIZADO
+}
+
+enum AgendaTipo {
+  PAGAR
+  RECEBER
+}
+
+enum PerfilUsuario {
+  ADMIN
+  FINANCEIRO
+}
