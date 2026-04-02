@@ -33,6 +33,38 @@ async function createEmpresa(req, res, next) {
 }
 
 /**
+ * Atualiza empresa.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {Promise<void>}
+ */
+async function updateEmpresa(req, res, next) {
+  try {
+    const data = await cadastroService.updateEmpresa(req.params.id, req.body);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Exclui empresa.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {Promise<void>}
+ */
+async function deleteEmpresa(req, res, next) {
+  try {
+    await cadastroService.deleteEmpresa(req.params.id);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Lista contas bancarias.
  * @param {import("express").Request} req Requisicao HTTP.
  * @param {import("express").Response} res Resposta HTTP.
@@ -100,7 +132,9 @@ module.exports = {
   createConta,
   createEmpresa,
   createProjeto,
+  deleteEmpresa,
   listContas,
   listEmpresas,
   listProjetos,
+  updateEmpresa,
 };

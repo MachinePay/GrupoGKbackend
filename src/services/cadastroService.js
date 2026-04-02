@@ -33,6 +33,72 @@ async function createEmpresa(payload) {
 }
 
 /**
+ * Atualiza o nome de uma empresa.
+ * @param {number | string} id Identificador da empresa.
+ * @param {{ nome: string }} payload Dados da empresa.
+ * @returns {Promise<object>}
+ */
+async function updateEmpresa(id, payload) {
+  const empresaId = Number(id);
+
+  const existing = await prisma.empresa.findUnique({
+    where: { id: empresaId },
+  });
+
+  if (!existing) {
+    throw new AppError("Empresa nao encontrada.", 404);
+  }
+
+  return prisma.empresa.update({
+    where: { id: empresaId },
+    data: {
+      nome: payload.nome.trim(),
+    },
+  });
+}
+
+/**
+ * Remove uma empresa sem vinculos operacionais.
+ * @param {number | string} id Identificador da empresa.
+ * @returns {Promise<void>}
+ */
+async function deleteEmpresa(id) {
+  const empresaId = Number(id);
+
+  const existing = await prisma.empresa.findUnique({
+    where: { id: empresaId },
+  });
+
+  if (!existing) {
+    throw new AppError("Empresa nao encontrada.", 404);
+  }
+
+  const [contasCount, projetosCount, movimentacoesCount, agendaCount] =
+    await Promise.all([
+      prisma.contaBancaria.count({ where: { empresaId } }),
+      prisma.projeto.count({ where: { empresaId } }),
+      prisma.movimentacao.count({ where: { empresaId } }),
+      prisma.agenda.count({ where: { empresaId } }),
+    ]);
+
+  if (
+    contasCount > 0 ||
+    projetosCount > 0 ||
+    movimentacoesCount > 0 ||
+    agendaCount > 0
+  ) {
+    throw new AppError(
+      "Nao e possivel excluir empresa com contas, projetos, movimentacoes ou agenda vinculados.",
+      409,
+    );
+  }
+
+  await prisma.empresa.delete({
+    where: { id: empresaId },
+  });
+}
+
+/**
  * Lista contas bancarias com filtro opcional por empresa.
  * @param {{ empresaId?: string }} query Parametros de consulta.
  * @returns {Promise<object[]>}
@@ -149,7 +215,9 @@ module.exports = {
   createConta,
   createEmpresa,
   createProjeto,
+  deleteEmpresa,
   listContas,
   listEmpresas,
   listProjetos,
+  updateEmpresa,
 };

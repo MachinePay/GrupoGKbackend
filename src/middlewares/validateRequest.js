@@ -329,6 +329,34 @@ function validateCreateEmpresa(req, _res, next) {
 }
 
 /**
+ * Valida id de empresa em params.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} _res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {void}
+ */
+function validateEmpresaIdParam(req, _res, next) {
+  const { id } = req.params;
+
+  if (!id || Number.isNaN(Number(id))) {
+    return next(new AppError("Parametro id de empresa invalido.", 400));
+  }
+
+  return next();
+}
+
+/**
+ * Valida atualizacao de empresa.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} _res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {void}
+ */
+function validateUpdateEmpresa(req, _res, next) {
+  return validateCreateEmpresa(req, _res, next);
+}
+
+/**
  * Valida criacao de conta bancaria.
  * @param {import("express").Request} req Requisicao HTTP.
  * @param {import("express").Response} _res Resposta HTTP.
@@ -620,6 +648,8 @@ module.exports = {
   validateCreateEmpresa,
   validateCreateMovimentacao,
   validateCreateProjeto,
+  validateEmpresaIdParam,
   validateLogin,
   validateRegister,
+  validateUpdateEmpresa,
 };
