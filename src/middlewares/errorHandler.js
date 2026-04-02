@@ -32,7 +32,9 @@ function normalizePrismaError(error) {
   }
 
   if (error instanceof Prisma.PrismaClientValidationError) {
-    return new AppError("Dados invalidos enviados para o Prisma.", 400);
+    return new AppError("Dados invalidos enviados para o Prisma.", 400, {
+      prismaMessage: error.message,
+    });
   }
 
   return new AppError("Erro interno no banco de dados.", 500);
