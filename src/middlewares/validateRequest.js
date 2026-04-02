@@ -400,6 +400,34 @@ function validateCreateConta(req, _res, next) {
 }
 
 /**
+ * Valida id de conta bancaria em params.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} _res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {void}
+ */
+function validateContaIdParam(req, _res, next) {
+  const { id } = req.params;
+
+  if (!id || Number.isNaN(Number(id))) {
+    return next(new AppError("Parametro id de conta invalido.", 400));
+  }
+
+  return next();
+}
+
+/**
+ * Valida atualizacao de conta bancaria.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} _res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {void}
+ */
+function validateUpdateConta(req, _res, next) {
+  return validateCreateConta(req, _res, next);
+}
+
+/**
  * Valida criacao de projeto.
  * @param {import("express").Request} req Requisicao HTTP.
  * @param {import("express").Response} _res Resposta HTTP.
@@ -642,6 +670,7 @@ module.exports = {
   validateAgendaQuery,
   validateMovimentacoesQuery,
   validateChangePassword,
+  validateContaIdParam,
   validateCreateAgendaItem,
   validateAgendaSettlement,
   validateCreateConta,
@@ -651,5 +680,6 @@ module.exports = {
   validateEmpresaIdParam,
   validateLogin,
   validateRegister,
+  validateUpdateConta,
   validateUpdateEmpresa,
 };

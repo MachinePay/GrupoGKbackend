@@ -97,6 +97,38 @@ async function createConta(req, res, next) {
 }
 
 /**
+ * Atualiza conta bancaria.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {Promise<void>}
+ */
+async function updateConta(req, res, next) {
+  try {
+    const data = await cadastroService.updateConta(req.params.id, req.body);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Exclui conta bancaria.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {Promise<void>}
+ */
+async function deleteConta(req, res, next) {
+  try {
+    await cadastroService.deleteConta(req.params.id);
+    res.status(204).send();
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Lista projetos.
  * @param {import("express").Request} req Requisicao HTTP.
  * @param {import("express").Response} res Resposta HTTP.
@@ -132,9 +164,11 @@ module.exports = {
   createConta,
   createEmpresa,
   createProjeto,
+  deleteConta,
   deleteEmpresa,
   listContas,
   listEmpresas,
   listProjetos,
+  updateConta,
   updateEmpresa,
 };

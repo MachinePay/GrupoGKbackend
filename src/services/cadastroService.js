@@ -128,6 +128,11 @@ async function listContas(query) {
  * @returns {Promise<object>}
  */
 async function createConta(payload) {
+  const saldoValue =
+    payload.saldoAtual !== undefined
+      ? payload.saldoAtual
+      : payload.saldoInicial;
+
   const empresa = await prisma.empresa.findUnique({
     where: { id: Number(payload.empresaId) },
   });
@@ -141,9 +146,7 @@ async function createConta(payload) {
       nome: payload.nome.trim(),
       banco: payload.banco.trim(),
       saldoAtual:
-        payload.saldoAtual !== undefined
-          ? toDecimal(payload.saldoAtual)
-          : toDecimal(0),
+        saldoValue !== undefined ? toDecimal(saldoValue) : toDecimal(0),
       empresaId: Number(payload.empresaId),
     },
     include: {
@@ -154,6 +157,83 @@ async function createConta(payload) {
         },
       },
     },
+  });
+}
+
+/**
+ * Atualiza dados de uma conta bancaria.
+ * @param {number | string} id Identificador da conta.
+ * @param {{ nome: string, banco: string, empresaId: number | string }} payload Dados da conta.
+ * @returns {Promise<object>}
+ */
+async function updateConta(id, payload) {
+  const contaId = Number(id);
+
+  const existing = await prisma.contaBancaria.findUnique({
+    where: { id: contaId },
+  });
+
+  if (!existing) {
+    throw new AppError("Conta bancaria nao encontrada.", 404);
+  }
+
+  const empresa = await prisma.empresa.findUnique({
+    where: { id: Number(payload.empresaId) },
+  });
+
+  if (!empresa) {
+    throw new AppError("Empresa nao encontrada para vincular a conta.", 404);
+  }
+
+  return prisma.contaBancaria.update({
+    where: { id: contaId },
+    data: {
+      nome: payload.nome.trim(),
+      banco: payload.banco.trim(),
+      empresaId: Number(payload.empresaId),
+    },
+    include: {
+      empresa: {
+        select: {
+          id: true,
+          nome: true,
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Remove conta bancaria sem movimentacoes vinculadas.
+ * @param {number | string} id Identificador da conta.
+ * @returns {Promise<void>}
+ */
+async function deleteConta(id) {
+  const contaId = Number(id);
+
+  const existing = await prisma.contaBancaria.findUnique({
+    where: { id: contaId },
+  });
+
+  if (!existing) {
+    throw new AppError("Conta bancaria nao encontrada.", 404);
+  }
+
+  const movimentacoesCount = await prisma.movimentacao.count({
+    where: {
+      OR: [{ contaOrigemId: contaId }, { contaDestinoId: contaId }],
+    },
+  });
+
+  if (movimentacoesCount > 0) {
+    throw new AppError(
+      "Nao e possivel excluir conta com movimentacoes vinculadas.",
+      409,
+    );
+  }
+
+  await prisma.contaBancaria.delete({
+    where: { id: contaId },
   });
 }
 
@@ -215,9 +295,11 @@ module.exports = {
   createConta,
   createEmpresa,
   createProjeto,
+  deleteConta,
   deleteEmpresa,
   listContas,
   listEmpresas,
   listProjetos,
+  updateConta,
   updateEmpresa,
 };

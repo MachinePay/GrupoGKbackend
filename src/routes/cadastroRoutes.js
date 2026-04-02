@@ -4,7 +4,9 @@ const {
   validateCreateConta,
   validateCreateEmpresa,
   validateCreateProjeto,
+  validateContaIdParam,
   validateEmpresaIdParam,
+  validateUpdateConta,
   validateUpdateEmpresa,
 } = require("../middlewares/validateRequest");
 
@@ -33,6 +35,17 @@ router.post(
   "/contas-bancarias",
   validateCreateConta,
   cadastroController.createConta,
+);
+router.patch(
+  "/contas-bancarias/:id",
+  validateContaIdParam,
+  validateUpdateConta,
+  cadastroController.updateConta,
+);
+router.delete(
+  "/contas-bancarias/:id",
+  validateContaIdParam,
+  cadastroController.deleteConta,
 );
 
 router.get("/projetos", cadastroController.listProjetos);
