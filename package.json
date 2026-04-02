@@ -11,6 +11,7 @@
     "prisma:push": "prisma db push",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "node prisma/seed.js",
+    "seed:agenda": "node prisma/seedAgenda.js",
     "db:setup": "npm run prisma:generate && npm run prisma:push && npm run prisma:seed"
   },
   "keywords": [],
