@@ -32,7 +32,26 @@ async function listMovimentacoes(req, res, next) {
   }
 }
 
+/**
+ * Exclui uma movimentacao prevista.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {Promise<void>}
+ */
+async function deleteMovimentacao(req, res, next) {
+  try {
+    const response = await movimentacaoService.deleteMovimentacao(
+      req.params.id,
+    );
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   createMovimentacao,
+  deleteMovimentacao,
   listMovimentacoes,
 };

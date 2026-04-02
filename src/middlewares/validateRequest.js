@@ -273,6 +273,23 @@ function validateMovimentacoesQuery(req, _res, next) {
 }
 
 /**
+ * Valida id da movimentacao em params.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} _res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {void}
+ */
+function validateMovimentacaoIdParam(req, _res, next) {
+  const { id } = req.params;
+
+  if (!id || Number.isNaN(Number(id))) {
+    return next(new AppError("Parametro id de movimentacao invalido.", 400));
+  }
+
+  return next();
+}
+
+/**
  * Valida os filtros opcionais do endpoint de agenda.
  * @param {import("express").Request} req Requisicao HTTP.
  * @param {import("express").Response} _res Resposta HTTP.
@@ -668,6 +685,7 @@ function validateChangePassword(req, _res, next) {
 
 module.exports = {
   validateAgendaQuery,
+  validateMovimentacaoIdParam,
   validateMovimentacoesQuery,
   validateChangePassword,
   validateContaIdParam,

@@ -1,4 +1,10 @@
-const { Prisma, MovimentacaoTipo } = require("@prisma/client");
+const {
+  AgendaStatus,
+  AgendaTipo,
+  Prisma,
+  MovimentacaoStatus,
+  MovimentacaoTipo,
+} = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 
@@ -23,6 +29,83 @@ const TIPOS_DESPESA_CUSTO_VARIAVEL = [
  */
 function toDecimal(value) {
   return new Prisma.Decimal(value);
+}
+
+/**
+ * Normaliza rótulos legíveis para campos enum.
+ * @param {string | undefined | null} value Valor bruto do enum.
+ * @returns {string | null}
+ */
+function formatEnumLabel(value) {
+  if (!value) {
+    return null;
+  }
+
+  return String(value).replaceAll("_", " ");
+}
+
+/**
+ * Cria item de agenda automaticamente para movimentacoes previstas.
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx Cliente transacional.
+ * @param {object} payload Dados recebidos da movimentacao.
+ * @returns {Promise<void>}
+ */
+async function createAgendaFromPrevisto(tx, payload, options = {}) {
+  const isPrevisto = payload.status === MovimentacaoStatus.PREVISTO;
+  const isSupportedType =
+    payload.tipo === MovimentacaoTipo.ENTRADA ||
+    payload.tipo === MovimentacaoTipo.SAIDA;
+
+  if (!isPrevisto || !isSupportedType) {
+    return;
+  }
+
+  const agendaTipo =
+    payload.tipo === MovimentacaoTipo.SAIDA
+      ? AgendaTipo.PAGAR
+      : AgendaTipo.RECEBER;
+  const descricaoParts = [
+    options.marker || null,
+    formatEnumLabel(payload.categoria),
+    formatEnumLabel(payload.tipoDespesa),
+    payload.centroOperacao?.trim() || null,
+  ].filter(Boolean);
+
+  await tx.agenda.create({
+    data: {
+      data: new Date(payload.data),
+      titulo:
+        payload.referencia?.trim() ||
+        (agendaTipo === AgendaTipo.PAGAR
+          ? "Lançamento previsto a pagar"
+          : "Lançamento previsto a receber"),
+      descricao: descricaoParts.length ? descricaoParts.join(" | ") : null,
+      origem: payload.canalOrigem?.trim() || null,
+      valor: toDecimal(payload.valor),
+      prioridade: "MEDIA",
+      status: AgendaStatus.PREVISTO,
+      tipo: agendaTipo,
+      empresaId: Number(payload.empresaId),
+    },
+  });
+}
+
+/**
+ * Remove item de agenda gerado automaticamente para uma movimentacao prevista.
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx Cliente transacional.
+ * @param {number} movimentacaoId Identificador da movimentacao.
+ * @returns {Promise<void>}
+ */
+async function deleteAutoAgendaForMovimentacao(tx, movimentacaoId) {
+  const marker = `[AUTO_MOV_ID:${movimentacaoId}]`;
+
+  await tx.agenda.deleteMany({
+    where: {
+      descricao: {
+        contains: marker,
+      },
+    },
+  });
 }
 
 /**
@@ -274,6 +357,11 @@ async function createMovimentacao(payload, options = {}) {
 
     await updateAccountBalances(tx, payload);
 
+    if (payload.status === MovimentacaoStatus.PREVISTO) {
+      const marker = `[AUTO_MOV_ID:${created.id}]`;
+      await createAgendaFromPrevisto(tx, payload, { marker });
+    }
+
     return created;
   };
 
@@ -282,6 +370,39 @@ async function createMovimentacao(payload, options = {}) {
     : await prisma.$transaction(createInClient);
 
   return movimentacao;
+}
+
+/**
+ * Exclui movimentacao prevista e remove item de agenda gerado automaticamente.
+ * @param {number | string} movimentacaoId Identificador da movimentacao.
+ * @returns {Promise<{id: number}>}
+ */
+async function deleteMovimentacao(movimentacaoId) {
+  return prisma.$transaction(async (tx) => {
+    const movimentacao = await tx.movimentacao.findUnique({
+      where: { id: Number(movimentacaoId) },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (!movimentacao) {
+      throw new AppError("Movimentacao nao encontrada.", 404);
+    }
+
+    if (movimentacao.status !== MovimentacaoStatus.PREVISTO) {
+      throw new AppError(
+        "Apenas movimentacoes previstas podem ser excluidas.",
+        400,
+      );
+    }
+
+    await deleteAutoAgendaForMovimentacao(tx, movimentacao.id);
+    await tx.movimentacao.delete({ where: { id: movimentacao.id } });
+
+    return { id: movimentacao.id };
+  });
 }
 
 /**
@@ -400,5 +521,6 @@ async function listMovimentacoes(filters) {
 
 module.exports = {
   createMovimentacao,
+  deleteMovimentacao,
   listMovimentacoes,
 };

@@ -2,6 +2,7 @@ const { Router } = require("express");
 const movimentacaoController = require("../controllers/movimentacaoController");
 const {
   validateCreateMovimentacao,
+  validateMovimentacaoIdParam,
   validateMovimentacoesQuery,
 } = require("../middlewares/validateRequest");
 
@@ -17,6 +18,12 @@ router.post(
   "/",
   validateCreateMovimentacao,
   movimentacaoController.createMovimentacao,
+);
+
+router.delete(
+  "/:id",
+  validateMovimentacaoIdParam,
+  movimentacaoController.deleteMovimentacao,
 );
 
 module.exports = router;
