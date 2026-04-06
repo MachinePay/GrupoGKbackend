@@ -341,10 +341,19 @@ async function fetchAgarraMaisAPI(options = {}) {
  * Sincroniza dados da AgarraMais com o sistema, criando itens de agenda pendentes.
  * @param {number} empresaId ID da empresa para importar dados
  * @param {number} usuarioId ID do usuário que dispara a sincronização (auditoria)
- * @returns {Promise<{sincronizados: number, duplicados: number, ignorados: number, detalhes: Array}>}
+ * @returns {Promise<{sincronizados: number, duplicados: number, ignorados: number, removidosValorZero: number, detalhes: Array}>}
  */
 async function syncAgarraMais(empresaId, usuarioId, options = {}) {
   try {
+    const limpeza = await prisma.agenda.deleteMany({
+      where: {
+        empresaId,
+        origemExterna: true,
+        status: AgendaStatus.PENDENTE_INTEGRACAO,
+        valor: { lte: 0 },
+      },
+    });
+
     const dadosExternos = await fetchAgarraMaisAPI(options);
 
     if (!dadosExternos || dadosExternos.length === 0) {
@@ -352,6 +361,7 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
         sincronizados: 0,
         duplicados: 0,
         ignorados: 0,
+        removidosValorZero: limpeza.count,
         detalhes: [
           { status: "info", mensagem: "Nenhum dado novo na AgarraMais" },
         ],
@@ -362,6 +372,7 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
       sincronizados: 0,
       duplicados: 0,
       ignorados: 0,
+      removidosValorZero: limpeza.count,
       erros: 0,
       detalhes: [],
     };
