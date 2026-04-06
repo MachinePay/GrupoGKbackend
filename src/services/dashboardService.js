@@ -1,10 +1,9 @@
-const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 
 /**
  * Extrai um valor decimal agregado retornando zero quando nulo.
- * @param {Prisma.Decimal | null | undefined} value Valor agregado.
+ * @param {import("@prisma/client").Prisma.Decimal | null | undefined} value Valor agregado.
  * @returns {number}
  */
 function decimalToNumber(value) {
@@ -39,28 +38,31 @@ async function getConsolidatedDashboard() {
 
 /**
  * Retorna o painel financeiro de uma empresa especifica.
+ * Contas bancarias sao globais e compartilhadas entre empresas.
  * @param {number} empresaId Identificador da empresa.
  * @returns {Promise<object>}
  */
 async function getEmpresaDashboard(empresaId) {
-  const empresa = await prisma.empresa.findUnique({
-    where: { id: Number(empresaId) },
-    include: {
-      contasBancarias: {
-        orderBy: { nome: "asc" },
-      },
-      projetos: {
-        include: {
-          _count: {
-            select: {
-              movimentacoes: true,
+  const [empresa, contasGlobais] = await Promise.all([
+    prisma.empresa.findUnique({
+      where: { id: Number(empresaId) },
+      include: {
+        projetos: {
+          include: {
+            _count: {
+              select: {
+                movimentacoes: true,
+              },
             },
           },
+          orderBy: { nome: "asc" },
         },
-        orderBy: { nome: "asc" },
       },
-    },
-  });
+    }),
+    prisma.contaBancaria.findMany({
+      orderBy: [{ banco: "asc" }, { nome: "asc" }],
+    }),
+  ]);
 
   if (!empresa) {
     throw new AppError("Empresa nao encontrada.", 404);
@@ -97,7 +99,7 @@ async function getEmpresaDashboard(empresaId) {
     totalSaidas,
     saldoLiquido: totalEntradas - totalSaidas,
     fluxoTransferencias: decimalToNumber(transferencias._sum.valor),
-    contas: empresa.contasBancarias,
+    contas: contasGlobais,
     projetos: empresa.projetos,
   };
 }
@@ -108,14 +110,6 @@ async function getEmpresaDashboard(empresaId) {
  */
 async function getContasDashboard() {
   const contas = await prisma.contaBancaria.findMany({
-    include: {
-      empresa: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
-    },
     orderBy: [{ banco: "asc" }, { nome: "asc" }],
   });
 
@@ -124,24 +118,15 @@ async function getContasDashboard() {
     nome: conta.nome,
     banco: conta.banco,
     saldoAtual: decimalToNumber(conta.saldoAtual),
-    empresa: conta.empresa,
   }));
 }
 
 /**
- * Consolida a participacao de cada empresa por banco.
+ * Consolida saldos por banco para o dashboard.
  * @returns {Promise<object[]>}
  */
 async function getBancosDashboard() {
   const contas = await prisma.contaBancaria.findMany({
-    include: {
-      empresa: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
-    },
     orderBy: [{ banco: "asc" }, { nome: "asc" }],
   });
 
@@ -156,7 +141,6 @@ async function getBancosDashboard() {
         banco,
         saldoTotal: 0,
         contas: [],
-        participacaoPorEmpresa: new Map(),
       });
     }
 
@@ -166,28 +150,14 @@ async function getBancosDashboard() {
       id: conta.id,
       nome: conta.nome,
       saldoAtual: saldo,
-      empresa: conta.empresa,
     });
-    bucket.participacaoPorEmpresa.set(
-      conta.empresa.nome,
-      (bucket.participacaoPorEmpresa.get(conta.empresa.nome) || 0) + saldo,
-    );
   }
 
   return Array.from(grouped.values()).map((bucket) => ({
     banco: bucket.banco,
     saldoTotal: bucket.saldoTotal,
     contas: bucket.contas,
-    participacaoPorEmpresa: Array.from(bucket.participacaoPorEmpresa.entries())
-      .map(([empresa, saldo]) => ({
-        empresa,
-        saldo,
-        percentual:
-          bucket.saldoTotal > 0
-            ? Number(((saldo / bucket.saldoTotal) * 100).toFixed(2))
-            : 0,
-      }))
-      .sort((a, b) => b.saldo - a.saldo),
+    participacaoPorEmpresa: [],
   }));
 }
 

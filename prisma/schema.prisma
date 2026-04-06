@@ -10,7 +10,6 @@ datasource db {
 model Empresa {
   id             Int             @id @default(autoincrement())
   nome           String          @unique
-  contasBancarias ContaBancaria[]
   projetos       Projeto[]
   movimentacoes  Movimentacao[]
   agendaItens    Agenda[]
@@ -23,14 +22,12 @@ model ContaBancaria {
   nome                 String
   banco                String
   saldoAtual           Decimal         @default(0) @map("saldo_atual") @db.Decimal(14, 2)
-  empresaId            Int             @map("empresa_id")
-  empresa              Empresa         @relation(fields: [empresaId], references: [id])
   movimentacoesOrigem  Movimentacao[]  @relation("ContaOrigem")
   movimentacoesDestino Movimentacao[]  @relation("ContaDestino")
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
-  @@unique([nome, empresaId])
+  @@unique([nome, banco])
   @@map("contas_bancarias")
 }
 

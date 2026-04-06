@@ -381,7 +381,7 @@ function validateUpdateEmpresa(req, _res, next) {
  * @returns {void}
  */
 function validateCreateConta(req, _res, next) {
-  const { nome, banco, empresaId, saldoAtual } = req.body;
+  const { nome, banco, saldoAtual } = req.body;
 
   if (!nome || typeof nome !== "string") {
     return next(
@@ -392,12 +392,6 @@ function validateCreateConta(req, _res, next) {
   if (!banco || typeof banco !== "string") {
     return next(
       new AppError("Campo banco e obrigatorio para conta bancaria.", 400),
-    );
-  }
-
-  if (!empresaId || Number.isNaN(Number(empresaId))) {
-    return next(
-      new AppError("Campo empresaId obrigatorio e deve ser numerico.", 400),
     );
   }
 

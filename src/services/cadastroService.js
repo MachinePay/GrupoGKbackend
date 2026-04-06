@@ -73,22 +73,15 @@ async function deleteEmpresa(id) {
     throw new AppError("Empresa nao encontrada.", 404);
   }
 
-  const [contasCount, projetosCount, movimentacoesCount, agendaCount] =
-    await Promise.all([
-      prisma.contaBancaria.count({ where: { empresaId } }),
-      prisma.projeto.count({ where: { empresaId } }),
-      prisma.movimentacao.count({ where: { empresaId } }),
-      prisma.agenda.count({ where: { empresaId } }),
-    ]);
+  const [projetosCount, movimentacoesCount, agendaCount] = await Promise.all([
+    prisma.projeto.count({ where: { empresaId } }),
+    prisma.movimentacao.count({ where: { empresaId } }),
+    prisma.agenda.count({ where: { empresaId } }),
+  ]);
 
-  if (
-    contasCount > 0 ||
-    projetosCount > 0 ||
-    movimentacoesCount > 0 ||
-    agendaCount > 0
-  ) {
+  if (projetosCount > 0 || movimentacoesCount > 0 || agendaCount > 0) {
     throw new AppError(
-      "Nao e possivel excluir empresa com contas, projetos, movimentacoes ou agenda vinculados.",
+      "Nao e possivel excluir empresa com projetos, movimentacoes ou agenda vinculados.",
       409,
     );
   }
@@ -99,32 +92,19 @@ async function deleteEmpresa(id) {
 }
 
 /**
- * Lista contas bancarias com filtro opcional por empresa.
- * @param {{ empresaId?: string }} query Parametros de consulta.
+ * Lista contas bancarias globais.
+ * @param {{ empresaId?: string }} _query Parametros de consulta (ignorado).
  * @returns {Promise<object[]>}
  */
-async function listContas(query) {
-  const where = query.empresaId
-    ? { empresaId: Number(query.empresaId) }
-    : undefined;
-
+async function listContas(_query) {
   return prisma.contaBancaria.findMany({
-    where,
-    include: {
-      empresa: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
-    },
     orderBy: [{ banco: "asc" }, { nome: "asc" }],
   });
 }
 
 /**
- * Cria uma conta bancaria para uma empresa.
- * @param {{ nome: string, banco: string, empresaId: number, saldoAtual?: number | string }} payload Dados da conta.
+ * Cria uma conta bancaria global.
+ * @param {{ nome: string, banco: string, saldoAtual?: number | string, saldoInicial?: number | string }} payload Dados da conta.
  * @returns {Promise<object>}
  */
 async function createConta(payload) {
@@ -133,29 +113,12 @@ async function createConta(payload) {
       ? payload.saldoAtual
       : payload.saldoInicial;
 
-  const empresa = await prisma.empresa.findUnique({
-    where: { id: Number(payload.empresaId) },
-  });
-
-  if (!empresa) {
-    throw new AppError("Empresa nao encontrada para vincular a conta.", 404);
-  }
-
   return prisma.contaBancaria.create({
     data: {
       nome: payload.nome.trim(),
       banco: payload.banco.trim(),
       saldoAtual:
         saldoValue !== undefined ? toDecimal(saldoValue) : toDecimal(0),
-      empresaId: Number(payload.empresaId),
-    },
-    include: {
-      empresa: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
     },
   });
 }
@@ -163,7 +126,7 @@ async function createConta(payload) {
 /**
  * Atualiza dados de uma conta bancaria.
  * @param {number | string} id Identificador da conta.
- * @param {{ nome: string, banco: string, empresaId: number | string }} payload Dados da conta.
+ * @param {{ nome: string, banco: string }} payload Dados da conta.
  * @returns {Promise<object>}
  */
 async function updateConta(id, payload) {
@@ -177,28 +140,11 @@ async function updateConta(id, payload) {
     throw new AppError("Conta bancaria nao encontrada.", 404);
   }
 
-  const empresa = await prisma.empresa.findUnique({
-    where: { id: Number(payload.empresaId) },
-  });
-
-  if (!empresa) {
-    throw new AppError("Empresa nao encontrada para vincular a conta.", 404);
-  }
-
   return prisma.contaBancaria.update({
     where: { id: contaId },
     data: {
       nome: payload.nome.trim(),
       banco: payload.banco.trim(),
-      empresaId: Number(payload.empresaId),
-    },
-    include: {
-      empresa: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
     },
   });
 }
