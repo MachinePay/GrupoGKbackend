@@ -96,6 +96,22 @@ async function changePassword(req, res, next) {
   }
 }
 
+/**
+ * Atualiza o tema do proprio usuario autenticado.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {Promise<void>}
+ */
+async function updateTheme(req, res, next) {
+  try {
+    const data = await authService.updateTheme(req.user.id, req.body);
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   changePassword,
   createUser,
@@ -103,4 +119,5 @@ module.exports = {
   login,
   me,
   toggleUserStatus,
+  updateTheme,
 };

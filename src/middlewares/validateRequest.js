@@ -6,6 +6,7 @@ const {
   MovimentacaoStatus,
   MovimentacaoTipo,
   PerfilUsuario,
+  TemaUsuario,
 } = require("@prisma/client");
 const AppError = require("./appError");
 
@@ -677,11 +678,37 @@ function validateChangePassword(req, _res, next) {
   return next();
 }
 
+/**
+ * Valida payload de atualizacao de tema.
+ * @param {import("express").Request} req Requisicao HTTP.
+ * @param {import("express").Response} _res Resposta HTTP.
+ * @param {import("express").NextFunction} next Proximo middleware.
+ * @returns {void}
+ */
+function validateUpdateTheme(req, _res, next) {
+  const { tema } = req.body;
+
+  if (!tema || typeof tema !== "string") {
+    return next(new AppError("Campo tema obrigatorio.", 400));
+  }
+
+  const normalizedTheme = tema.trim().toUpperCase();
+
+  if (!Object.values(TemaUsuario).includes(normalizedTheme)) {
+    return next(new AppError("Campo tema invalido. Use LIGHT ou DARK.", 400));
+  }
+
+  req.body.tema = normalizedTheme;
+
+  return next();
+}
+
 module.exports = {
   validateAgendaQuery,
   validateMovimentacaoIdParam,
   validateMovimentacoesQuery,
   validateChangePassword,
+  validateUpdateTheme,
   validateContaIdParam,
   validateCreateAgendaItem,
   validateAgendaSettlement,

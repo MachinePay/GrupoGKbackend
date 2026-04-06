@@ -103,6 +103,7 @@ model Usuario {
   email             String       @unique
   senhaHash         String       @map("senha_hash")
   perfil            PerfilUsuario @default(FINANCEIRO)
+  tema              TemaUsuario  @default(LIGHT)
   ativo             Boolean      @default(true)
   ultimoLoginAt     DateTime?    @map("ultimo_login_at")
   agendaAprovadas   Agenda[]
@@ -169,4 +170,9 @@ enum AgendaTipo {
 enum PerfilUsuario {
   ADMIN
   FINANCEIRO
+}
+
+enum TemaUsuario {
+  LIGHT
+  DARK
 }

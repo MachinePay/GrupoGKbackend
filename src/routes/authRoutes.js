@@ -5,6 +5,7 @@ const {
   validateChangePassword,
   validateLogin,
   validateRegister,
+  validateUpdateTheme,
 } = require("../middlewares/validateRequest");
 
 const router = Router();
@@ -16,6 +17,12 @@ router.patch(
   authenticate,
   validateChangePassword,
   authController.changePassword,
+);
+router.patch(
+  "/me/tema",
+  authenticate,
+  validateUpdateTheme,
+  authController.updateTheme,
 );
 
 router.get(

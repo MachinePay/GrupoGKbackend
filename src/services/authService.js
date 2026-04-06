@@ -7,7 +7,7 @@ const AppError = require("../middlewares/appError");
 /**
  * Remove campos sensiveis do usuario.
  * @param {import("@prisma/client").Usuario} usuario Registro do banco.
- * @returns {{ id: number, nome: string, email: string, perfil: string, ativo: boolean, ultimoLoginAt: Date | null, createdAt: Date, updatedAt: Date }}
+ * @returns {{ id: number, nome: string, email: string, perfil: string, tema: string, ativo: boolean, ultimoLoginAt: Date | null, createdAt: Date, updatedAt: Date }}
  */
 function sanitizeUser(usuario) {
   return {
@@ -15,6 +15,7 @@ function sanitizeUser(usuario) {
     nome: usuario.nome,
     email: usuario.email,
     perfil: usuario.perfil,
+    tema: usuario.tema,
     ativo: usuario.ativo,
     ultimoLoginAt: usuario.ultimoLoginAt,
     createdAt: usuario.createdAt,
@@ -193,6 +194,29 @@ async function changePassword(userId, payload) {
   });
 }
 
+/**
+ * Atualiza a preferencia de tema do usuario autenticado.
+ * @param {number} userId Identificador do usuario.
+ * @param {{ tema: "LIGHT" | "DARK" }} payload Dados do tema.
+ * @returns {Promise<object>}
+ */
+async function updateTheme(userId, payload) {
+  const usuario = await prisma.usuario.findUnique({
+    where: { id: Number(userId) },
+  });
+
+  if (!usuario) {
+    throw new AppError("Usuario nao encontrado.", 404);
+  }
+
+  const updated = await prisma.usuario.update({
+    where: { id: Number(userId) },
+    data: { tema: payload.tema },
+  });
+
+  return sanitizeUser(updated);
+}
+
 module.exports = {
   changePassword,
   createUser,
@@ -200,4 +224,5 @@ module.exports = {
   listUsers,
   login,
   toggleUserStatus,
+  updateTheme,
 };
