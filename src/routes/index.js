@@ -4,6 +4,7 @@ const authRoutes = require("./authRoutes");
 const cadastroRoutes = require("./cadastroRoutes");
 const dashboardRoutes = require("./dashboardRoutes");
 const movimentacaoRoutes = require("./movimentacaoRoutes");
+const integracaoRoutes = require("./integracaoRoutes");
 const { authenticate } = require("../middlewares/authMiddleware");
 
 const router = Router();
@@ -19,5 +20,6 @@ router.use("/movimentacoes", movimentacaoRoutes);
 router.use("/dashboards", dashboardRoutes);
 router.use("/agenda", agendaRoutes);
 router.use("/cadastros", cadastroRoutes);
+router.use("/integracao", integracaoRoutes);
 
 module.exports = router;

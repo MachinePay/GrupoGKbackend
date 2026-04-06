@@ -76,34 +76,41 @@ model Movimentacao {
 }
 
 model Agenda {
-  id         Int          @id @default(autoincrement())
-  data       DateTime
-  titulo     String
-  descricao  String?
-  origem     String?
-  valor      Decimal      @db.Decimal(14, 2)
-  prioridade String
-  status     AgendaStatus
-  tipo       AgendaTipo
-  empresaId  Int          @map("empresa_id")
-  empresa    Empresa      @relation(fields: [empresaId], references: [id])
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  id                    Int          @id @default(autoincrement())
+  data                  DateTime
+  titulo                String
+  descricao             String?
+  origem                String?
+  valor                 Decimal      @db.Decimal(14, 2)
+  prioridade            String
+  status                AgendaStatus
+  tipo                  AgendaTipo
+  origemExterna         Boolean      @default(false) @map("origem_externa")
+  referenciaExternaId   String?      @map("referencia_externa_id")
+  usuarioAprovadorId    Int?         @map("usuario_aprovador_id")
+  dataAprovacao         DateTime?    @map("data_aprovacao")
+  empresaId             Int          @map("empresa_id")
+  empresa               Empresa      @relation(fields: [empresaId], references: [id])
+  usuarioAprovador      Usuario?     @relation(fields: [usuarioAprovadorId], references: [id])
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
 
-  @@index([data, status])
+  @@index([data, status, origemExterna])
+  @@index([referenciaExternaId])
   @@map("agenda")
 }
 
 model Usuario {
-  id           Int          @id @default(autoincrement())
-  nome         String
-  email        String       @unique
-  senhaHash    String       @map("senha_hash")
-  perfil       PerfilUsuario @default(FINANCEIRO)
-  ativo        Boolean      @default(true)
-  ultimoLoginAt DateTime?   @map("ultimo_login_at")
-  createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  id                Int          @id @default(autoincrement())
+  nome              String
+  email             String       @unique
+  senhaHash         String       @map("senha_hash")
+  perfil            PerfilUsuario @default(FINANCEIRO)
+  ativo             Boolean      @default(true)
+  ultimoLoginAt     DateTime?    @map("ultimo_login_at")
+  agendaAprovadas   Agenda[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
   @@map("usuarios")
 }
@@ -152,6 +159,7 @@ enum GiraKidsSubcategoria {
 
 enum AgendaStatus {
   ATRASADO
+  PENDENTE_INTEGRACAO
   PREVISTO
   REALIZADO
 }
