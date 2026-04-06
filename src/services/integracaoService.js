@@ -12,6 +12,11 @@ const AppError = require("../middlewares/appError");
 
 const AGARRAMAIS_SOURCE = "AGARRAMAIS_GASTO_FIXO";
 const AGARRAMAIS_REPORT_SOURCE = "AGARRAMAIS_RELATORIO";
+const AGARRAMAIS_GROSS_TROCADORA_SOURCE = "AGARRAMAIS_BRUTO_TROCADORA";
+const AGARRAMAIS_GROSS_MAQUINAS_SOURCE = "AGARRAMAIS_BRUTO_MAQUINAS";
+const AGARRAMAIS_CARD_FEE_SOURCE = "AGARRAMAIS_CUSTO_TAXA_CARTAO";
+const AGARRAMAIS_VARIABLE_COST_SOURCE = "AGARRAMAIS_GASTO_VARIAVEL";
+const AGARRAMAIS_PRODUCT_COST_SOURCE = "AGARRAMAIS_CUSTO_PRODUTOS";
 const DEFAULT_REPORT_DAYS = 30;
 
 const FONTES_INTEGRACAO = [
@@ -217,6 +222,27 @@ function mapCategoria(nomeDespesa) {
     };
   }
 
+  if (nome.includes("GASTO VARIAVEL") || nome.includes("GASTOS VARIAVEIS")) {
+    return {
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.CUSTOS_OPERACIONAIS,
+    };
+  }
+
+  if (nome.includes("TAXA") && nome.includes("CARTAO")) {
+    return {
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.DESPESAS_DIVERSAS,
+    };
+  }
+
+  if (nome.includes("CUSTO") && nome.includes("PRODUTO")) {
+    return {
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.MATERIAL_ESTOQUE_EMBALAGENS,
+    };
+  }
+
   if (
     nome.includes("ENERG") ||
     nome.includes("LUZ") ||
@@ -244,6 +270,370 @@ function construirDescricaoRelatorio(loja, dashboard) {
     `Gasto variavel periodo: ${Number(totais.totalGastosVariaveis || 0).toFixed(2)}`,
     `Lucro operacional: ${Number(totais.lucroOperacional || 0).toFixed(2)}`,
   ].join(" | ");
+}
+
+function toNumber(value) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  const normalized = String(value)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/\.(?=\d{3}(\D|$))/g, "")
+    .replace(",", ".")
+    .replace(/[^\d.-]/g, "");
+
+  if (!normalized) {
+    return null;
+  }
+
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function getPathValue(obj, path) {
+  return path.split(".").reduce((acc, key) => {
+    if (!acc || typeof acc !== "object") {
+      return undefined;
+    }
+
+    return acc[key];
+  }, obj);
+}
+
+function getMetricValue(obj, paths, fallback = 0) {
+  for (const path of paths) {
+    const rawValue = getPathValue(obj, path);
+    const numberValue = toNumber(rawValue);
+    if (numberValue !== null) {
+      return numberValue;
+    }
+  }
+
+  return fallback;
+}
+
+function construirDescricaoEntradaBruta({
+  loja,
+  origemLabel,
+  total,
+  dinheiro,
+  cartaoPix,
+  competencia,
+}) {
+  return [
+    `Loja: ${loja.nome}`,
+    `Origem: ${origemLabel}`,
+    `Competencia: ${competencia}`,
+    `Total bruto: ${Number(total || 0).toFixed(2)}`,
+    `Dinheiro: ${Number(dinheiro || 0).toFixed(2)}`,
+    `Cartao/Pix: ${Number(cartaoPix || 0).toFixed(2)}`,
+  ].join(" | ");
+}
+
+function construirItensEntradasBrutas(
+  loja,
+  dashboard,
+  periodo,
+  relatorioDetalhado,
+) {
+  const itens = [];
+
+  const totaisDetalhados = relatorioDetalhado?.totais || {};
+
+  const trocadoraDinheiro = getMetricValue(
+    dashboard,
+    [
+      "totais.valorDinheiroLoja",
+      "trocadora.dinheiro",
+      "trocadora.totalDinheiro",
+      "resumo.trocadora.dinheiro",
+      "totais.trocadoraDinheiro",
+    ],
+    Number(totaisDetalhados.valorDinheiroLoja || 0),
+  );
+  const trocadoraCartaoPix = getMetricValue(
+    dashboard,
+    [
+      "totais.valorCartaoPixLoja",
+      "trocadora.cartaoPix",
+      "trocadora.cartao_pix",
+      "trocadora.cartao",
+      "resumo.trocadora.cartaoPix",
+      "totais.trocadoraCartaoPix",
+      "totais.trocadoraCartaoEPix",
+    ],
+    Number(totaisDetalhados.valorCartaoPixLoja || 0),
+  );
+  const trocadoraTotal = getMetricValue(
+    dashboard,
+    [
+      "totais.valorTotalLojaBruto",
+      "totais.valorBrutoConsolidadoLojaMaquinas",
+      "trocadora.totalBruto",
+      "trocadora.valorBruto",
+      "trocadora.total",
+      "resumo.trocadora.total",
+      "totais.valorBrutoTrocadora",
+      "totais.totalTrocadora",
+    ],
+    Number(totaisDetalhados.valorTotalLojaBruto || 0) ||
+      trocadoraDinheiro + trocadoraCartaoPix,
+  );
+
+  if (trocadoraTotal > 0) {
+    itens.push({
+      id: `entrada-bruta:trocadora:${loja.id}:${periodo.competencia}`,
+      descricao: `Valor bruto mensal vindo da Trocadora - ${loja.nome}`,
+      detalhe: construirDescricaoEntradaBruta({
+        loja,
+        origemLabel: "Trocadora",
+        total: trocadoraTotal,
+        dinheiro: trocadoraDinheiro,
+        cartaoPix: trocadoraCartaoPix,
+        competencia: periodo.competencia,
+      }),
+      valor: trocadoraTotal,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "ENTRADA_BRUTA",
+      categoria: null,
+      tipoDespesa: null,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_GROSS_TROCADORA_SOURCE,
+    });
+  }
+
+  const maquinasDinheiro = getMetricValue(
+    dashboard,
+    [
+      "totais.valorDinheiroMaquinas",
+      "maquinas.dinheiro",
+      "maquinas.totalDinheiro",
+      "resumo.maquinas.dinheiro",
+      "totais.maquinasDinheiro",
+    ],
+    Number(totaisDetalhados.valorDinheiroMaquinas || 0),
+  );
+  const maquinasCartaoPix = getMetricValue(
+    dashboard,
+    [
+      "totais.valorCartaoPixMaquinasBruto",
+      "maquinas.cartaoPix",
+      "maquinas.cartao_pix",
+      "maquinas.cartao",
+      "resumo.maquinas.cartaoPix",
+      "totais.maquinasCartaoPix",
+      "totais.maquinasCartaoEPix",
+    ],
+    Number(totaisDetalhados.valorCartaoPixMaquinasBruto || 0),
+  );
+  const maquinasTotal = getMetricValue(
+    dashboard,
+    [
+      "totais.valorBrutoMaquinas",
+      "maquinas.totalBruto",
+      "maquinas.valorBruto",
+      "maquinas.total",
+      "resumo.maquinas.total",
+      "totais.valorBrutoMaquinas",
+      "totais.totalMaquinas",
+      "totais.faturamento",
+    ],
+    Number(totaisDetalhados.valorBrutoMaquinas || 0) ||
+      maquinasDinheiro + maquinasCartaoPix,
+  );
+
+  if (maquinasTotal > 0) {
+    itens.push({
+      id: `entrada-bruta:maquinas:${loja.id}:${periodo.competencia}`,
+      descricao: `Valor bruto mensal vindo das Maquinas - ${loja.nome}`,
+      detalhe: construirDescricaoEntradaBruta({
+        loja,
+        origemLabel: "Maquinas",
+        total: maquinasTotal,
+        dinheiro: maquinasDinheiro,
+        cartaoPix: maquinasCartaoPix,
+        competencia: periodo.competencia,
+      }),
+      valor: maquinasTotal,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "ENTRADA_BRUTA",
+      categoria: null,
+      tipoDespesa: null,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_GROSS_MAQUINAS_SOURCE,
+    });
+  }
+
+  return itens;
+}
+
+function construirDescricaoCustoDashboard({
+  loja,
+  nomeCusto,
+  competencia,
+  valor,
+  extras = [],
+}) {
+  return [
+    `Loja: ${loja.nome}`,
+    `Tipo: ${nomeCusto}`,
+    `Competencia: ${competencia}`,
+    `Valor: ${Number(valor || 0).toFixed(2)}`,
+    ...extras.filter(Boolean),
+  ].join(" | ");
+}
+
+function construirItensCustosDashboard(
+  loja,
+  dashboard,
+  periodo,
+  relatorioDetalhado,
+) {
+  const itens = [];
+
+  const totaisDetalhados = relatorioDetalhado?.totais || {};
+
+  const taxaMediaPercentual = getMetricValue(
+    dashboard,
+    [
+      "totais.percentualTaxaCartaoMedia",
+      "taxaMediaCartao.percentual",
+      "taxaMediaCartao.taxa",
+      "taxaCartao.percentual",
+      "totais.taxaMediaCartao",
+    ],
+    Number(totaisDetalhados.percentualTaxaCartaoMedia || 0),
+  );
+  const taxaCartaoValor = getMetricValue(
+    dashboard,
+    [
+      "totais.taxaDeCartao",
+      "taxaMediaCartao.valorTaxas",
+      "taxaMediaCartao.valorTaxasPeriodo",
+      "taxaMediaCartao.custoTotal",
+      "taxaCartao.valor",
+      "totais.valorTaxasCartao",
+      "totais.taxasCartao",
+      "totais.custoTaxasCartao",
+    ],
+    Number(totaisDetalhados.taxaDeCartao || 0),
+  );
+
+  if (taxaCartaoValor > 0) {
+    itens.push({
+      id: `custo-taxa-cartao:${loja.id}:${periodo.competencia}`,
+      descricao: `Custo mensal da taxa média de cartão - ${loja.nome}`,
+      detalhe: construirDescricaoCustoDashboard({
+        loja,
+        nomeCusto: "Taxa média de cartão",
+        competencia: periodo.competencia,
+        valor: taxaCartaoValor,
+        extras: [
+          taxaMediaPercentual
+            ? `Taxa media: ${Number(taxaMediaPercentual).toFixed(2)}%`
+            : null,
+        ],
+      }),
+      valor: taxaCartaoValor,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "CUSTO_DASHBOARD",
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.DESPESAS_DIVERSAS,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_CARD_FEE_SOURCE,
+    });
+  }
+
+  const gastosVariaveis = getMetricValue(
+    dashboard,
+    [
+      "totais.gastoVariavelTotalPeriodo",
+      "totais.custoVariavelPeriodo",
+      "gastosVariaveis.total",
+      "gastosVariaveis.valor",
+      "totais.totalGastosVariaveis",
+      "totais.gastosVariaveis",
+    ],
+    Number(totaisDetalhados.gastoVariavelTotalPeriodo || 0) ||
+      Number(totaisDetalhados.custoVariavelPeriodo || 0),
+  );
+
+  if (gastosVariaveis > 0) {
+    itens.push({
+      id: `gasto-variavel:${loja.id}:${periodo.competencia}`,
+      descricao: `Gastos variáveis mensais - ${loja.nome}`,
+      detalhe: construirDescricaoCustoDashboard({
+        loja,
+        nomeCusto: "Gastos variáveis",
+        competencia: periodo.competencia,
+        valor: gastosVariaveis,
+      }),
+      valor: gastosVariaveis,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "CUSTO_DASHBOARD",
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.CUSTOS_OPERACIONAIS,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_VARIABLE_COST_SOURCE,
+    });
+  }
+
+  const custoTotalProdutos = getMetricValue(
+    dashboard,
+    [
+      "totais.gastoProdutosTotalPeriodo",
+      "totais.custoProdutosTotal",
+      "custosProdutos.total",
+      "custosProdutos.valor",
+      "produtos.custoTotal",
+      "produtos.custoTotalProdutos",
+      "totais.custoTotalProdutos",
+      "totais.custosProdutos",
+    ],
+    Number(totaisDetalhados.gastoProdutosTotalPeriodo || 0) ||
+      Number(totaisDetalhados.custoProdutosTotal || 0),
+  );
+  const produtosSaidos = getMetricValue(dashboard, [
+    "produtos.qtdSaida",
+    "produtos.quantidadeSaida",
+    "totais.produtosSaidos",
+  ]);
+
+  if (custoTotalProdutos > 0) {
+    itens.push({
+      id: `custo-produtos:${loja.id}:${periodo.competencia}`,
+      descricao: `Custo total de produtos no mês - ${loja.nome}`,
+      detalhe: construirDescricaoCustoDashboard({
+        loja,
+        nomeCusto: "Custo total de produtos",
+        competencia: periodo.competencia,
+        valor: custoTotalProdutos,
+        extras: [
+          produtosSaidos ? `Produtos sairam: ${Number(produtosSaidos)}` : null,
+        ],
+      }),
+      valor: custoTotalProdutos,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "CUSTO_DASHBOARD",
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.MATERIAL_ESTOQUE_EMBALAGENS,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_PRODUCT_COST_SOURCE,
+    });
+  }
+
+  return itens;
 }
 
 /**
@@ -303,6 +693,40 @@ async function fetchAgarraMaisAPI(options = {}) {
           dataFim: periodo.dataFimIso,
         },
       });
+
+      let relatorioDetalhado = null;
+      try {
+        relatorioDetalhado = await requestAgarraMais(
+          "/api/relatorios/impressao",
+          {
+            token,
+            params: {
+              lojaId: loja.id,
+              dataInicio: periodo.dataInicioIso,
+              dataFim: periodo.dataFimIso,
+            },
+          },
+        );
+      } catch (_error) {
+        // Fallback para dashboard caso o endpoint de impressao falhe.
+      }
+
+      itens.push(
+        ...construirItensEntradasBrutas(
+          loja,
+          dashboard,
+          periodo,
+          relatorioDetalhado,
+        ),
+      );
+      itens.push(
+        ...construirItensCustosDashboard(
+          loja,
+          dashboard,
+          periodo,
+          relatorioDetalhado,
+        ),
+      );
 
       itens.push({
         id: `relatorio:${loja.id}:${periodo.dataInicioIso}:${periodo.dataFimIso}`,
@@ -423,9 +847,9 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
             prioridade: "ALTA",
             status: AgendaStatus.PENDENTE_INTEGRACAO,
             tipo:
-              item.tipo === "GASTO_FIXO"
-                ? AgendaTipo.PAGAR
-                : AgendaTipo.RECEBER,
+              item.tipo === "RELATORIO" || item.tipo === "ENTRADA_BRUTA"
+                ? AgendaTipo.RECEBER
+                : AgendaTipo.PAGAR,
             origemExterna: true,
             referenciaExternaId: item.id,
             origem: item.origem,
@@ -527,7 +951,7 @@ async function aprovarPendencia(agendaId, usuarioId, opcoes = {}) {
             item.tipo === AgendaTipo.PAGAR
               ? MovimentacaoTipo.SAIDA
               : MovimentacaoTipo.ENTRADA,
-          categoria: categoriaFinal,
+          categoria: item.tipo === AgendaTipo.PAGAR ? categoriaFinal : null,
           tipoDespesa: item.tipo === AgendaTipo.PAGAR ? tipoDespesaFinal : null,
           referencia: `Aprovado via AgarraMais - ${item.referenciaExternaId}`,
           status: MovimentacaoStatus.REALIZADO,
@@ -640,7 +1064,16 @@ async function listarPendencias(empresaId) {
     return pendencias.map((item) => ({
       ...item,
       classificacaoExterna:
-        item.origem === AGARRAMAIS_REPORT_SOURCE ? "RELATORIO" : "GASTO_FIXO",
+        item.origem === AGARRAMAIS_REPORT_SOURCE
+          ? "RELATORIO"
+          : item.origem === AGARRAMAIS_GROSS_TROCADORA_SOURCE ||
+              item.origem === AGARRAMAIS_GROSS_MAQUINAS_SOURCE
+            ? "ENTRADA_BRUTA"
+            : item.origem === AGARRAMAIS_CARD_FEE_SOURCE ||
+                item.origem === AGARRAMAIS_VARIABLE_COST_SOURCE ||
+                item.origem === AGARRAMAIS_PRODUCT_COST_SOURCE
+              ? "CUSTO_DASHBOARD"
+              : "GASTO_FIXO",
       permiteAprovacaoFinanceira: item.origem !== AGARRAMAIS_REPORT_SOURCE,
     }));
   } catch (erro) {
