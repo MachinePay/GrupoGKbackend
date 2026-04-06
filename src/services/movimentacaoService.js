@@ -383,7 +383,11 @@ async function deleteMovimentacao(movimentacaoId) {
       where: { id: Number(movimentacaoId) },
       select: {
         id: true,
+        tipo: true,
+        valor: true,
         status: true,
+        contaOrigemId: true,
+        contaDestinoId: true,
       },
     });
 
@@ -391,17 +395,72 @@ async function deleteMovimentacao(movimentacaoId) {
       throw new AppError("Movimentacao nao encontrada.", 404);
     }
 
-    if (movimentacao.status !== MovimentacaoStatus.PREVISTO) {
-      throw new AppError(
-        "Apenas movimentacoes previstas podem ser excluidas.",
-        400,
-      );
+    if (movimentacao.status === MovimentacaoStatus.PREVISTO) {
+      await deleteAutoAgendaForMovimentacao(tx, movimentacao.id);
     }
 
-    await deleteAutoAgendaForMovimentacao(tx, movimentacao.id);
+    // Estorna o efeito financeiro para deixar o saldo como se o lançamento nunca existisse.
+    if (movimentacao.status === MovimentacaoStatus.REALIZADO) {
+      if (
+        movimentacao.tipo === MovimentacaoTipo.ENTRADA &&
+        movimentacao.contaDestinoId
+      ) {
+        await tx.contaBancaria.update({
+          where: { id: movimentacao.contaDestinoId },
+          data: {
+            saldoAtual: {
+              decrement: movimentacao.valor,
+            },
+          },
+        });
+      }
+
+      if (
+        movimentacao.tipo === MovimentacaoTipo.SAIDA &&
+        movimentacao.contaOrigemId
+      ) {
+        await tx.contaBancaria.update({
+          where: { id: movimentacao.contaOrigemId },
+          data: {
+            saldoAtual: {
+              increment: movimentacao.valor,
+            },
+          },
+        });
+      }
+
+      if (movimentacao.tipo === MovimentacaoTipo.TRANSFERENCIA) {
+        if (movimentacao.contaOrigemId) {
+          await tx.contaBancaria.update({
+            where: { id: movimentacao.contaOrigemId },
+            data: {
+              saldoAtual: {
+                increment: movimentacao.valor,
+              },
+            },
+          });
+        }
+
+        if (movimentacao.contaDestinoId) {
+          await tx.contaBancaria.update({
+            where: { id: movimentacao.contaDestinoId },
+            data: {
+              saldoAtual: {
+                decrement: movimentacao.valor,
+              },
+            },
+          });
+        }
+      }
+    }
+
     await tx.movimentacao.delete({ where: { id: movimentacao.id } });
 
-    return { id: movimentacao.id };
+    return {
+      id: movimentacao.id,
+      statusRemovido: movimentacao.status,
+      saldoEstornado: movimentacao.status === MovimentacaoStatus.REALIZADO,
+    };
   });
 }
 
