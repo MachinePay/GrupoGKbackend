@@ -4,6 +4,15 @@ const integracaoController = require("../controllers/integracaoController");
 const router = Router();
 
 /**
+ * GET /integracao/empresas-integradas
+ * Lista empresas com integração ativa (conforme backend/env)
+ */
+router.get(
+  "/empresas-integradas",
+  integracaoController.listarEmpresasIntegradas,
+);
+
+/**
  * GET /integracao/agarramais/sync?empresaId=1
  * Dispara sincronização com API da AgarraMais
  */

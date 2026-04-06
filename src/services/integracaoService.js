@@ -14,6 +14,58 @@ const AGARRAMAIS_SOURCE = "AGARRAMAIS_GASTO_FIXO";
 const AGARRAMAIS_REPORT_SOURCE = "AGARRAMAIS_RELATORIO";
 const DEFAULT_REPORT_DAYS = 30;
 
+const FONTES_INTEGRACAO = [
+  {
+    id: "agarramais",
+    nome: "AgarraMais",
+    matchers: ["agarramais", "agarra mais"],
+    syncDisponivel: true,
+  },
+  {
+    id: "girakids",
+    nome: "GiraKids",
+    matchers: ["girakids", "gira kids"],
+    syncDisponivel: false,
+  },
+];
+
+function isEnabledEnvFlag(key, defaultValue = false) {
+  const rawValue = process.env[key];
+
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return defaultValue;
+  }
+
+  return ["1", "true", "yes", "on", "sim"].includes(
+    String(rawValue).trim().toLowerCase(),
+  );
+}
+
+function isAgarraMaisConfigured() {
+  return Boolean(
+    process.env.AGARRAMAIS_API_URL &&
+    process.env.AGARRAMAIS_EMAIL &&
+    process.env.AGARRAMAIS_SENHA,
+  );
+}
+
+function getFontesAtivas() {
+  return FONTES_INTEGRACAO.filter((fonte) => {
+    if (fonte.id === "agarramais") {
+      return isEnabledEnvFlag(
+        "INTEGRACAO_AGARRAMAIS_ATIVA",
+        isAgarraMaisConfigured(),
+      );
+    }
+
+    if (fonte.id === "girakids") {
+      return isEnabledEnvFlag("INTEGRACAO_GIRAKIDS_ATIVA", false);
+    }
+
+    return false;
+  });
+}
+
 function getAgarraMaisConfig() {
   const apiUrl = process.env.AGARRAMAIS_API_URL;
   const email = process.env.AGARRAMAIS_EMAIL;
@@ -610,6 +662,61 @@ async function obterEstatisticasPendencias(empresaId, dataInicio, dataFim) {
   }
 }
 
+/**
+ * Lista empresas que possuem integração ativa configurada no backend.
+ * @returns {Promise<{fontesAtivas: Array<object>, empresas: Array<object>}>
+ */
+async function listarEmpresasIntegradas() {
+  try {
+    const fontesAtivas = getFontesAtivas();
+
+    if (!fontesAtivas.length) {
+      return { fontesAtivas: [], empresas: [] };
+    }
+
+    const empresas = await prisma.empresa.findMany({
+      select: { id: true, nome: true },
+      orderBy: { nome: "asc" },
+    });
+
+    const empresasIntegradas = empresas
+      .map((empresa) => {
+        const nomeNormalizado = String(empresa.nome || "").toLowerCase();
+
+        const fonte = fontesAtivas.find((item) =>
+          item.matchers.some((matcher) => nomeNormalizado.includes(matcher)),
+        );
+
+        if (!fonte) {
+          return null;
+        }
+
+        return {
+          id: empresa.id,
+          nome: empresa.nome,
+          integracao: fonte.id,
+          integracaoLabel: fonte.nome,
+          syncDisponivel: fonte.syncDisponivel,
+        };
+      })
+      .filter(Boolean);
+
+    return {
+      fontesAtivas: fontesAtivas.map((fonte) => ({
+        id: fonte.id,
+        nome: fonte.nome,
+        syncDisponivel: fonte.syncDisponivel,
+      })),
+      empresas: empresasIntegradas,
+    };
+  } catch (erro) {
+    throw new AppError(
+      `Erro ao listar empresas integradas: ${erro.message}`,
+      500,
+    );
+  }
+}
+
 module.exports = {
   fetchAgarraMaisAPI,
   syncAgarraMais,
@@ -617,4 +724,5 @@ module.exports = {
   rejeitarPendencia,
   listarPendencias,
   obterEstatisticasPendencias,
+  listarEmpresasIntegradas,
 };

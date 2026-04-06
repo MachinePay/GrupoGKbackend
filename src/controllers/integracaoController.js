@@ -167,10 +167,24 @@ async function obterEstatisticas(req, res, next) {
   }
 }
 
+/**
+ * GET /integracao/empresas-integradas
+ * Lista empresas que possuem integração ativa configurada.
+ */
+async function listarEmpresasIntegradas(req, res, next) {
+  try {
+    const resultado = await integracaoService.listarEmpresasIntegradas();
+    res.status(200).json(resultado);
+  } catch (erro) {
+    next(erro);
+  }
+}
+
 module.exports = {
   syncAgarraMais,
   listarPendencias,
   aprovarPendencia,
   rejeitarPendencia,
   obterEstatisticas,
+  listarEmpresasIntegradas,
 };
