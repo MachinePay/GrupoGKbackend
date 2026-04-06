@@ -341,7 +341,7 @@ async function fetchAgarraMaisAPI(options = {}) {
  * Sincroniza dados da AgarraMais com o sistema, criando itens de agenda pendentes.
  * @param {number} empresaId ID da empresa para importar dados
  * @param {number} usuarioId ID do usuário que dispara a sincronização (auditoria)
- * @returns {Promise<{sincronizados: number, duplicados: number, detalhes: Array}>}
+ * @returns {Promise<{sincronizados: number, duplicados: number, ignorados: number, detalhes: Array}>}
  */
 async function syncAgarraMais(empresaId, usuarioId, options = {}) {
   try {
@@ -351,6 +351,7 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
       return {
         sincronizados: 0,
         duplicados: 0,
+        ignorados: 0,
         detalhes: [
           { status: "info", mensagem: "Nenhum dado novo na AgarraMais" },
         ],
@@ -360,6 +361,7 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
     const resultado = {
       sincronizados: 0,
       duplicados: 0,
+      ignorados: 0,
       erros: 0,
       detalhes: [],
     };
@@ -367,6 +369,17 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
     // Processa cada item externo
     for (const item of dadosExternos) {
       try {
+        const valorItem = Number(item.valor || 0);
+        if (!(valorItem > 0)) {
+          resultado.ignorados += 1;
+          resultado.detalhes.push({
+            status: "ignorado",
+            mensagem: `Item ${item.descricao} ignorado por valor igual ou menor que zero`,
+            referenciaExterna: item.id,
+          });
+          continue;
+        }
+
         const jaExiste = await prisma.agenda.findFirst({
           where: {
             referenciaExternaId: item.id,
@@ -395,7 +408,7 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
             ]
               .filter(Boolean)
               .join(" | "),
-            valor: new Prisma.Decimal(item.valor),
+            valor: new Prisma.Decimal(valorItem),
             prioridade: "ALTA",
             status: AgendaStatus.PENDENTE_INTEGRACAO,
             tipo:
@@ -605,6 +618,7 @@ async function listarPendencias(empresaId) {
         empresaId,
         origemExterna: true,
         status: AgendaStatus.PENDENTE_INTEGRACAO,
+        valor: { gt: 0 },
       },
       include: {
         empresa: { select: { id: true, nome: true } },
@@ -637,6 +651,7 @@ async function obterEstatisticasPendencias(empresaId, dataInicio, dataFim) {
         empresaId,
         origemExterna: true,
         data: { gte: dataInicio, lte: dataFim },
+        valor: { gt: 0 },
       },
       select: { status: true, valor: true },
     });
