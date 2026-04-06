@@ -8,7 +8,11 @@ const AppError = require("../middlewares/appError");
 async function syncAgarraMais(req, res, next) {
   try {
     const { empresaId, dataInicio, dataFim, lojaIds } = req.query;
-    const usuarioId = req.usuario.id;
+    const usuarioId = req.user?.id;
+
+    if (!usuarioId) {
+      throw new AppError("Usuario nao autenticado.", 401);
+    }
 
     if (!empresaId) {
       throw new AppError("empresaId é obrigatório como query parameter", 400);
@@ -72,7 +76,11 @@ async function aprovarPendencia(req, res, next) {
     const { agendaId } = req.params;
     const { valorAjustado, categoriaAjustada, tipoDespesaAjustada, contaId } =
       req.body;
-    const usuarioId = req.usuario.id;
+    const usuarioId = req.user?.id;
+
+    if (!usuarioId) {
+      throw new AppError("Usuario nao autenticado.", 401);
+    }
 
     if (!agendaId) {
       throw new AppError("agendaId é obrigatório", 400);
