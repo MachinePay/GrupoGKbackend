@@ -56,6 +56,80 @@ function buildWhereFilter(filtros) {
 }
 
 /**
+ * Retorna o fim do dia para um filtro de data.
+ * @param {string} value Data no formato YYYY-MM-DD.
+ * @returns {Date}
+ */
+function getEndOfDay(value) {
+  const date = new Date(value);
+  date.setHours(23, 59, 59, 999);
+  return date;
+}
+
+/**
+ * Monta um filtro base para movimentacoes sem amarrar a conta.
+ * @param {object} filtros Filtros recebidos da requisicao.
+ * @param {{ dataInicio?: string, dataFim?: string }} [overrides] Datas opcionais.
+ * @returns {object}
+ */
+function buildBaseMovimentacaoWhere(filtros, overrides = {}) {
+  const where = { status: "REALIZADO" };
+
+  if (filtros.empresaId && filtros.empresaId !== "todas") {
+    where.empresaId = Number(filtros.empresaId);
+  }
+
+  const dataInicio = overrides.dataInicio ?? filtros.dataInicio;
+  const dataFim = overrides.dataFim ?? filtros.dataFim;
+
+  if (dataInicio || dataFim) {
+    where.data = {};
+
+    if (dataInicio) {
+      where.data.gte = new Date(dataInicio);
+    }
+
+    if (dataFim) {
+      where.data.lte = getEndOfDay(dataFim);
+    }
+  }
+
+  return where;
+}
+
+/**
+ * Monta filtro para entradas de uma conta, considerando entradas externas e transferencias recebidas.
+ * @param {number} contaId Identificador da conta.
+ * @param {object} baseWhere Filtro base das movimentacoes.
+ * @returns {object}
+ */
+function buildContaEntradasWhere(contaId, baseWhere) {
+  return {
+    ...baseWhere,
+    OR: [
+      { tipo: "ENTRADA", contaDestinoId: contaId },
+      { tipo: "TRANSFERENCIA", contaDestinoId: contaId },
+    ],
+  };
+}
+
+/**
+ * Monta filtro para saidas de uma conta, considerando saidas externas e transferencias enviadas.
+ * @param {number} contaId Identificador da conta.
+ * @param {object} baseWhere Filtro base das movimentacoes.
+ * @returns {object}
+ */
+function buildContaSaidasWhere(contaId, baseWhere) {
+  return {
+    ...baseWhere,
+    OR: [
+      { tipo: "SAIDA", contaOrigemId: contaId },
+      { tipo: "TRANSFERENCIA", contaOrigemId: contaId },
+    ],
+  };
+}
+
+/**
  * Retorna dados para o gráfico de evolução (Receitas vs Despesas ao longo do tempo)
  */
 async function getEvolucaoChart(filtros) {
@@ -237,47 +311,75 @@ async function getRankingProjetos(filtros) {
  */
 async function getTabelaContas(filtros) {
   const contas = await prisma.contaBancaria.findMany({
+    where:
+      filtros.contaId && filtros.contaId !== "todas"
+        ? { id: Number(filtros.contaId) }
+        : undefined,
     orderBy: [{ banco: "asc" }, { nome: "asc" }],
   });
 
-  const where = buildWhereFilter(filtros);
+  const periodoWhere = buildBaseMovimentacaoWhere(filtros);
+  const possuiDataFim = Boolean(filtros.dataFim);
+  const posPeriodoWhere = possuiDataFim
+    ? {
+        status: "REALIZADO",
+        ...(filtros.empresaId && filtros.empresaId !== "todas"
+          ? { empresaId: Number(filtros.empresaId) }
+          : {}),
+        data: { gt: getEndOfDay(filtros.dataFim) },
+      }
+    : null;
 
   const dados = [];
   let totalEntradas = 0;
   let totalSaidas = 0;
 
   for (const conta of contas) {
-    const [entradas, saidas] = await Promise.all([
-      prisma.movimentacao.aggregate({
-        _sum: { valor: true },
-        where: {
-          ...where,
-          contaOrigemId: conta.id,
-          tipo: "ENTRADA",
-        },
-      }),
-      prisma.movimentacao.aggregate({
-        _sum: { valor: true },
-        where: {
-          ...where,
-          contaDestinoId: conta.id,
-          tipo: "SAIDA",
-        },
-      }),
-    ]);
+    const [entradas, saidas, entradasPosPeriodo, saidasPosPeriodo] =
+      await Promise.all([
+        prisma.movimentacao.aggregate({
+          _sum: { valor: true },
+          where: buildContaEntradasWhere(conta.id, periodoWhere),
+        }),
+        prisma.movimentacao.aggregate({
+          _sum: { valor: true },
+          where: buildContaSaidasWhere(conta.id, periodoWhere),
+        }),
+        posPeriodoWhere
+          ? prisma.movimentacao.aggregate({
+              _sum: { valor: true },
+              where: buildContaEntradasWhere(conta.id, posPeriodoWhere),
+            })
+          : Promise.resolve({ _sum: { valor: null } }),
+        posPeriodoWhere
+          ? prisma.movimentacao.aggregate({
+              _sum: { valor: true },
+              where: buildContaSaidasWhere(conta.id, posPeriodoWhere),
+            })
+          : Promise.resolve({ _sum: { valor: null } }),
+      ]);
 
     const movEntradas = decimalToNumber(entradas._sum.valor);
     const movSaidas = decimalToNumber(saidas._sum.valor);
+    const entradasDepoisDoPeriodo = decimalToNumber(
+      entradasPosPeriodo._sum.valor,
+    );
+    const saidasDepoisDoPeriodo = decimalToNumber(saidasPosPeriodo._sum.valor);
+    const saldoAtual = decimalToNumber(conta.saldoAtual);
+    const saldoFinalPeriodo =
+      saldoAtual - entradasDepoisDoPeriodo + saidasDepoisDoPeriodo;
+    const saldoInicialPeriodo = saldoFinalPeriodo - movEntradas + movSaidas;
+
     totalEntradas += movEntradas;
     totalSaidas += movSaidas;
 
     dados.push({
       banco: conta.banco,
       conta: conta.nome,
-      saldoInicial: decimalToNumber(conta.saldoAtual),
+      saldoInicial: parseFloat(saldoInicialPeriodo.toFixed(2)),
       entradas: movEntradas,
       saidas: movSaidas,
-      saldoFinal: decimalToNumber(conta.saldoAtual) + movEntradas - movSaidas,
+      saldoFinal: parseFloat(saldoFinalPeriodo.toFixed(2)),
     });
   }
 
