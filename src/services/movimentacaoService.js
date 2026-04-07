@@ -523,6 +523,31 @@ async function listMovimentacoes(filters) {
           ],
         }
       : {}),
+    ...(String(filters.somenteAprovadosConciliacao).toLowerCase() === "true"
+      ? {
+          AND: [
+            {
+              OR: [
+                {
+                  canalOrigem: {
+                    not: "AGARRAMAIS",
+                  },
+                },
+                {
+                  AND: [
+                    { canalOrigem: "AGARRAMAIS" },
+                    {
+                      referencia: {
+                        startsWith: "Aprovado via AgarraMais -",
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }
+      : {}),
   };
 
   const [total, items] = await Promise.all([

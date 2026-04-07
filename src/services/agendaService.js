@@ -1,4 +1,4 @@
-const { Prisma } = require("@prisma/client");
+const { AgendaStatus, Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 const { createMovimentacao } = require("./movimentacaoService");
@@ -47,6 +47,16 @@ async function getAgendaItems(filters) {
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.tipo ? { tipo: filters.tipo } : {}),
     ...(filters.empresaId ? { empresaId: Number(filters.empresaId) } : {}),
+    OR: [
+      { origemExterna: false },
+      {
+        AND: [
+          { origemExterna: true },
+          { status: AgendaStatus.REALIZADO },
+          { usuarioAprovadorId: { not: null } },
+        ],
+      },
+    ],
   };
 
   return prisma.agenda.findMany({
@@ -76,6 +86,12 @@ async function getAgendaSettlementHistory(filters) {
     ...buildAgendaDateFilter(filters.dataInicio, filters.dataFim),
     status: "REALIZADO",
     ...(filters.empresaId ? { empresaId: Number(filters.empresaId) } : {}),
+    OR: [
+      { origemExterna: false },
+      {
+        AND: [{ origemExterna: true }, { usuarioAprovadorId: { not: null } }],
+      },
+    ],
   };
 
   const [total, items] = await Promise.all([
