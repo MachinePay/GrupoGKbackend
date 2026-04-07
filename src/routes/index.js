@@ -5,6 +5,7 @@ const cadastroRoutes = require("./cadastroRoutes");
 const dashboardRoutes = require("./dashboardRoutes");
 const movimentacaoRoutes = require("./movimentacaoRoutes");
 const integracaoRoutes = require("./integracaoRoutes");
+const relatoriosRoutes = require("./relatoriosRoutes");
 const { authenticate } = require("../middlewares/authMiddleware");
 
 const router = Router();
@@ -18,6 +19,7 @@ router.use(authenticate);
 
 router.use("/movimentacoes", movimentacaoRoutes);
 router.use("/dashboards", dashboardRoutes);
+router.use("/relatorios", relatoriosRoutes);
 router.use("/agenda", agendaRoutes);
 router.use("/cadastros", cadastroRoutes);
 router.use("/integracao", integracaoRoutes);
