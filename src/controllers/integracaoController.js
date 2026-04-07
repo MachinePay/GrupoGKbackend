@@ -74,6 +74,28 @@ async function syncMaisQuiosque(req, res, next) {
   }
 }
 
+async function listarMaisQuiosqueFechamentos(req, res, next) {
+  try {
+    const { referenceMonth } = req.query;
+    const data = await integracaoService.listarMaisQuiosqueFechamentos({
+      referenceMonth,
+    });
+
+    res.status(200).json({ data });
+  } catch (erro) {
+    next(erro);
+  }
+}
+
+async function salvarMaisQuiosqueFechamento(req, res, next) {
+  try {
+    const data = await integracaoService.salvarMaisQuiosqueFechamento(req.body);
+    res.status(201).json({ data });
+  } catch (erro) {
+    next(erro);
+  }
+}
+
 /**
  * GET /integracao/pendencias
  * Lista itens pendentes de aprovação
@@ -215,6 +237,8 @@ async function listarEmpresasIntegradas(req, res, next) {
 module.exports = {
   syncAgarraMais,
   syncMaisQuiosque,
+  listarMaisQuiosqueFechamentos,
+  salvarMaisQuiosqueFechamento,
   listarPendencias,
   aprovarPendencia,
   rejeitarPendencia,

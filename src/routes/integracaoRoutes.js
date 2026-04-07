@@ -25,6 +25,24 @@ router.get("/agarramais/sync", integracaoController.syncAgarraMais);
 router.get("/maisquiosque/sync", integracaoController.syncMaisQuiosque);
 
 /**
+ * GET /integracao/maisquiosque/fechamentos?referenceMonth=2026-03
+ * Lista fechamentos da MaisQuiosque via backend GK
+ */
+router.get(
+  "/maisquiosque/fechamentos",
+  integracaoController.listarMaisQuiosqueFechamentos,
+);
+
+/**
+ * POST /integracao/maisquiosque/fechamentos
+ * Salva fechamento da MaisQuiosque via backend GK
+ */
+router.post(
+  "/maisquiosque/fechamentos",
+  integracaoController.salvarMaisQuiosqueFechamento,
+);
+
+/**
  * GET /integracao/pendencias?empresaId=1
  * Lista todos os itens pendentes de aprovação de uma empresa
  */

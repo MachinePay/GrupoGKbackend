@@ -378,6 +378,43 @@ async function syncMaisQuiosque(empresaId, usuarioId, options = {}) {
   }
 }
 
+async function listarMaisQuiosqueFechamentos(options = {}) {
+  try {
+    const token = await authenticateMaisQuiosque();
+    const payload = await requestMaisQuiosque("/api/logistics/fechamentos", {
+      token,
+      params: options.referenceMonth
+        ? { referenceMonth: options.referenceMonth }
+        : undefined,
+    });
+
+    return Array.isArray(payload?.data) ? payload.data : [];
+  } catch (erro) {
+    throw new AppError(
+      `Erro ao listar fechamentos da MaisQuiosque: ${erro.message}`,
+      500,
+    );
+  }
+}
+
+async function salvarMaisQuiosqueFechamento(payload) {
+  try {
+    const token = await authenticateMaisQuiosque();
+    const response = await requestMaisQuiosque("/api/logistics/fechamentos", {
+      method: "POST",
+      token,
+      body: payload,
+    });
+
+    return response?.data ?? null;
+  } catch (erro) {
+    throw new AppError(
+      `Erro ao salvar fechamento da MaisQuiosque: ${erro.message}`,
+      500,
+    );
+  }
+}
+
 function getPeriodoReferencia(dataInicio, dataFim) {
   let fim;
   let inicio;
@@ -1689,6 +1726,8 @@ module.exports = {
   fetchAgarraMaisAPI,
   syncAgarraMais,
   syncMaisQuiosque,
+  listarMaisQuiosqueFechamentos,
+  salvarMaisQuiosqueFechamento,
   aprovarPendencia,
   rejeitarPendencia,
   listarPendencias,
