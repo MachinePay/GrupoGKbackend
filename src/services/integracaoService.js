@@ -97,10 +97,30 @@ function getAgarraMaisConfig() {
 }
 
 function getPeriodoReferencia(dataInicio, dataFim) {
-  const fim = dataFim ? new Date(`${dataFim}T23:59:59`) : new Date();
-  const inicio = dataInicio
-    ? new Date(`${dataInicio}T00:00:00`)
-    : new Date(new Date(fim).setDate(fim.getDate() - DEFAULT_REPORT_DAYS));
+  let fim;
+  let inicio;
+
+  if (dataInicio || dataFim) {
+    fim = dataFim ? new Date(`${dataFim}T23:59:59`) : new Date();
+    inicio = dataInicio
+      ? new Date(`${dataInicio}T00:00:00`)
+      : new Date(new Date(fim).setDate(fim.getDate() - DEFAULT_REPORT_DAYS));
+  } else {
+    // Sem período informado, sincroniza o mês anterior fechado.
+    const agora = new Date();
+    const primeiroDiaMesAtual = new Date(
+      agora.getFullYear(),
+      agora.getMonth(),
+      1,
+      0,
+      0,
+      0,
+      0,
+    );
+
+    fim = new Date(primeiroDiaMesAtual.getTime() - 1);
+    inicio = new Date(fim.getFullYear(), fim.getMonth(), 1, 0, 0, 0, 0);
+  }
 
   if (Number.isNaN(inicio.getTime()) || Number.isNaN(fim.getTime())) {
     throw new AppError("Periodo da integracao invalido.", 400);
