@@ -27,6 +27,12 @@ const FONTES_INTEGRACAO = [
     syncDisponivel: true,
   },
   {
+    id: "maisquiosque",
+    nome: "MaisQuiosque",
+    matchers: ["maisquiosque", "mais quiosque"],
+    syncDisponivel: false,
+  },
+  {
     id: "girakids",
     nome: "GiraKids",
     matchers: ["girakids", "gira kids"],
@@ -61,6 +67,10 @@ function getFontesAtivas() {
         "INTEGRACAO_AGARRAMAIS_ATIVA",
         isAgarraMaisConfigured(),
       );
+    }
+
+    if (fonte.id === "maisquiosque") {
+      return isEnabledEnvFlag("INTEGRACAO_MAISQUIOSQUE_ATIVA", true);
     }
 
     if (fonte.id === "girakids") {
