@@ -135,6 +135,14 @@ function getPeriodoReferencia(dataInicio, dataFim) {
   };
 }
 
+function getAnoMesPeriodo(periodo) {
+  const [ano, mes] = String(periodo.competencia).split("-");
+  return {
+    ano: Number(ano),
+    mes: Number(mes),
+  };
+}
+
 async function requestAgarraMais(
   path,
   { method = "GET", token, body, params, timeoutMs },
@@ -656,10 +664,231 @@ function construirItensCustosDashboard(
   return itens;
 }
 
+async function fetchFechamentoMensalAgarraMais(token, lojaId, periodo) {
+  const { ano, mes } = getAnoMesPeriodo(periodo);
+
+  const response = await requestAgarraMais(
+    "/api/fechamentos-mensais-relatorio",
+    {
+      token,
+      params: {
+        lojaId,
+        ano,
+        mes,
+      },
+    },
+  );
+
+  const fechamentos = Array.isArray(response?.fechamentos)
+    ? response.fechamentos
+    : [];
+
+  if (!fechamentos.length) {
+    return null;
+  }
+
+  const fechamento = fechamentos.find(
+    (item) => Number(item?.ano) === ano && Number(item?.mes) === mes,
+  );
+
+  return fechamento || fechamentos[0] || null;
+}
+
+function construirItensDoFechamentoMensal(loja, fechamento, periodo) {
+  const itens = [];
+  const fechamentoId = fechamento?.id || `${loja.id}:${periodo.competencia}`;
+
+  const valorTrocadoraDinheiroBruto =
+    toNumber(fechamento?.valorTrocadoraDinheiroBruto) || 0;
+  const valorTrocadoraCartaoPixBruto =
+    toNumber(fechamento?.valorTrocadoraCartaoPixBruto) || 0;
+  const valorTrocadoraBruto =
+    valorTrocadoraDinheiroBruto + valorTrocadoraCartaoPixBruto;
+
+  if (valorTrocadoraBruto > 0) {
+    itens.push({
+      id: `fechamento:entrada-bruta:trocadora:${fechamentoId}`,
+      descricao: `Valor bruto mensal vindo da Trocadora - ${loja.nome}`,
+      detalhe: construirDescricaoEntradaBruta({
+        loja,
+        origemLabel: "Trocadora",
+        total: valorTrocadoraBruto,
+        dinheiro: valorTrocadoraDinheiroBruto,
+        cartaoPix: valorTrocadoraCartaoPixBruto,
+        competencia: periodo.competencia,
+      }),
+      valor: valorTrocadoraBruto,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "ENTRADA_BRUTA",
+      categoria: null,
+      tipoDespesa: null,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_GROSS_TROCADORA_SOURCE,
+    });
+  }
+
+  const valorMaquinasDinheiroBruto =
+    toNumber(fechamento?.valorMaquinasDinheiroBruto) || 0;
+  const valorMaquinasCartaoPixBruto =
+    toNumber(fechamento?.valorMaquinasCartaoPixBruto) || 0;
+  const valorMaquinasBruto =
+    valorMaquinasDinheiroBruto + valorMaquinasCartaoPixBruto;
+
+  if (valorMaquinasBruto > 0) {
+    itens.push({
+      id: `fechamento:entrada-bruta:maquinas:${fechamentoId}`,
+      descricao: `Valor bruto mensal vindo das Maquinas - ${loja.nome}`,
+      detalhe: construirDescricaoEntradaBruta({
+        loja,
+        origemLabel: "Maquinas",
+        total: valorMaquinasBruto,
+        dinheiro: valorMaquinasDinheiroBruto,
+        cartaoPix: valorMaquinasCartaoPixBruto,
+        competencia: periodo.competencia,
+      }),
+      valor: valorMaquinasBruto,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "ENTRADA_BRUTA",
+      categoria: null,
+      tipoDespesa: null,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_GROSS_MAQUINAS_SOURCE,
+    });
+  }
+
+  const taxaCartaoValor = toNumber(fechamento?.taxaCartaoValor) || 0;
+  const taxaCartaoPercentualMedia =
+    toNumber(fechamento?.taxaCartaoPercentualMedia) || 0;
+
+  if (taxaCartaoValor > 0) {
+    itens.push({
+      id: `fechamento:custo-taxa-cartao:${fechamentoId}`,
+      descricao: `Custo mensal da taxa média de cartão - ${loja.nome}`,
+      detalhe: construirDescricaoCustoDashboard({
+        loja,
+        nomeCusto: "Taxa média de cartão",
+        competencia: periodo.competencia,
+        valor: taxaCartaoValor,
+        extras: [
+          taxaCartaoPercentualMedia
+            ? `Taxa media: ${Number(taxaCartaoPercentualMedia).toFixed(2)}%`
+            : null,
+        ],
+      }),
+      valor: taxaCartaoValor,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "CUSTO_DASHBOARD",
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.DESPESAS_DIVERSAS,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_CARD_FEE_SOURCE,
+    });
+  }
+
+  const gastoVariavelTotal = toNumber(fechamento?.gastoVariavelTotal) || 0;
+
+  if (gastoVariavelTotal > 0) {
+    itens.push({
+      id: `fechamento:gasto-variavel:${fechamentoId}`,
+      descricao: `Gastos variáveis mensais - ${loja.nome}`,
+      detalhe: construirDescricaoCustoDashboard({
+        loja,
+        nomeCusto: "Gastos variáveis",
+        competencia: periodo.competencia,
+        valor: gastoVariavelTotal,
+      }),
+      valor: gastoVariavelTotal,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "CUSTO_DASHBOARD",
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.CUSTOS_OPERACIONAIS,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_VARIABLE_COST_SOURCE,
+    });
+  }
+
+  const gastoProdutosTotal = toNumber(fechamento?.gastoProdutosTotal) || 0;
+  const produtosSaidos = Number(fechamento?.produtosSairam || 0);
+
+  if (gastoProdutosTotal > 0) {
+    itens.push({
+      id: `fechamento:custo-produtos:${fechamentoId}`,
+      descricao: `Custo total de produtos no mês - ${loja.nome}`,
+      detalhe: construirDescricaoCustoDashboard({
+        loja,
+        nomeCusto: "Custo total de produtos",
+        competencia: periodo.competencia,
+        valor: gastoProdutosTotal,
+        extras: [produtosSaidos ? `Produtos sairam: ${produtosSaidos}` : null],
+      }),
+      valor: gastoProdutosTotal,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "CUSTO_DASHBOARD",
+      categoria: MovimentacaoCategoria.CUSTO_VARIAVEL,
+      tipoDespesa: TipoDespesa.MATERIAL_ESTOQUE_EMBALAGENS,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_PRODUCT_COST_SOURCE,
+    });
+  }
+
+  const gastosFixosDetalhados = Array.isArray(fechamento?.gastosFixosDetalhados)
+    ? fechamento.gastosFixosDetalhados
+    : [];
+
+  for (const gasto of gastosFixosDetalhados) {
+    const valor = toNumber(gasto?.valor) || 0;
+    if (!(valor > 0)) continue;
+
+    const nome = String(gasto?.nome || "Gasto fixo").trim();
+    const classificacao = mapCategoria(nome);
+
+    itens.push({
+      id: `fechamento:gasto-fixo:${fechamentoId}:${gasto?.id || nome}`,
+      descricao: `${nome} - ${loja.nome}`,
+      detalhe: `Loja: ${loja.nome} | Origem: Fechamento mensal | Competencia: ${periodo.competencia}`,
+      valor,
+      data: new Date(`${periodo.dataFimIso}T12:00:00`),
+      tipo: "GASTO_FIXO",
+      categoria: classificacao.categoria,
+      tipoDespesa: classificacao.tipoDespesa,
+      lojaId: loja.id,
+      lojaNome: loja.nome,
+      origem: AGARRAMAIS_SOURCE,
+    });
+  }
+
+  if (!gastosFixosDetalhados.length) {
+    const gastoFixoTotal = toNumber(fechamento?.gastoFixoTotal) || 0;
+    if (gastoFixoTotal > 0) {
+      const classificacao = mapCategoria("Gastos fixos do mes");
+      itens.push({
+        id: `fechamento:gasto-fixo-total:${fechamentoId}`,
+        descricao: `Gastos fixos totais no mês - ${loja.nome}`,
+        detalhe: `Loja: ${loja.nome} | Origem: Fechamento mensal | Competencia: ${periodo.competencia}`,
+        valor: gastoFixoTotal,
+        data: new Date(`${periodo.dataFimIso}T12:00:00`),
+        tipo: "GASTO_FIXO",
+        categoria: classificacao.categoria,
+        tipoDespesa: classificacao.tipoDespesa,
+        lojaId: loja.id,
+        lojaNome: loja.nome,
+        origem: AGARRAMAIS_SOURCE,
+      });
+    }
+  }
+
+  return itens;
+}
+
 /**
- * Busca gastos fixos e snapshots de relatorio na API AgarraMais.
+ * Busca dados da integração AgarraMais exclusivamente via fechamento mensal.
  * @param {object} options Opcoes de sincronizacao.
- * @returns {Promise<Array<object>>}
+ * @returns {Promise<{itens: Array<object>, avisos: Array<object>, periodo: object}>}
  */
 async function fetchAgarraMaisAPI(options = {}) {
   const token = await authenticateAgarraMais();
@@ -680,105 +909,44 @@ async function fetchAgarraMaisAPI(options = {}) {
     : [];
 
   const itens = [];
+  const avisos = [];
 
   for (const loja of lojasFiltradas) {
-    const gastos = await requestAgarraMais(
-      `/api/gastos-fixos-loja/${loja.id}`,
-      { token },
-    );
-
-    for (const gasto of Array.isArray(gastos) ? gastos : []) {
-      const classificacao = mapCategoria(gasto.nome);
-      itens.push({
-        id: `gasto-fixo:${loja.id}:${gasto.id}:${periodo.competencia}`,
-        descricao: `${gasto.nome} - ${loja.nome}`,
-        detalhe: gasto.observacao || null,
-        valor: Number(gasto.valor || 0),
-        data: new Date(`${periodo.dataFimIso}T12:00:00`),
-        tipo: "GASTO_FIXO",
-        categoria: classificacao.categoria,
-        tipoDespesa: classificacao.tipoDespesa,
-        lojaId: loja.id,
-        lojaNome: loja.nome,
-        origem: AGARRAMAIS_SOURCE,
-      });
-    }
-
     try {
-      const dashboard = await requestAgarraMais("/api/relatorios/dashboard", {
+      const fechamentoMensal = await fetchFechamentoMensalAgarraMais(
         token,
-        params: {
-          lojaId: loja.id,
-          dataInicio: periodo.dataInicioIso,
-          dataFim: periodo.dataFimIso,
-        },
-      });
+        loja.id,
+        periodo,
+      );
 
-      let relatorioDetalhado = null;
-      try {
-        relatorioDetalhado = await requestAgarraMais(
-          "/api/relatorios/impressao",
-          {
-            token,
-            params: {
-              lojaId: loja.id,
-              dataInicio: periodo.dataInicioIso,
-              dataFim: periodo.dataFimIso,
-            },
-          },
+      if (fechamentoMensal) {
+        itens.push(
+          ...construirItensDoFechamentoMensal(loja, fechamentoMensal, periodo),
         );
-      } catch (_error) {
-        // Fallback para dashboard caso o endpoint de impressao falhe.
+        continue;
       }
 
-      itens.push(
-        ...construirItensEntradasBrutas(
-          loja,
-          dashboard,
-          periodo,
-          relatorioDetalhado,
-        ),
-      );
-      itens.push(
-        ...construirItensCustosDashboard(
-          loja,
-          dashboard,
-          periodo,
-          relatorioDetalhado,
-        ),
-      );
-
-      itens.push({
-        id: `relatorio:${loja.id}:${periodo.dataInicioIso}:${periodo.dataFimIso}`,
-        descricao: `Relatorio operacional - ${loja.nome}`,
-        detalhe: construirDescricaoRelatorio(loja, dashboard),
-        valor: 0,
-        data: new Date(`${periodo.dataFimIso}T12:00:00`),
-        tipo: "RELATORIO",
-        categoria: null,
-        tipoDespesa: null,
+      avisos.push({
+        status: "aviso",
         lojaId: loja.id,
         lojaNome: loja.nome,
-        origem: AGARRAMAIS_REPORT_SOURCE,
+        mensagem: `Nao existe fechamento mensal na AgarraMais para a loja ${loja.nome} em ${periodo.competencia}.`,
       });
-    } catch (error) {
-      itens.push({
-        id: `relatorio-erro:${loja.id}:${periodo.dataInicioIso}:${periodo.dataFimIso}`,
-        descricao: `Relatorio indisponivel - ${loja.nome}`,
-        detalhe: `Nao foi possivel obter o dashboard da AgarraMais: ${error.message}`,
-        valor: 0,
-        data: new Date(`${periodo.dataFimIso}T12:00:00`),
-        tipo: "RELATORIO",
-        categoria: null,
-        tipoDespesa: null,
+    } catch (_error) {
+      avisos.push({
+        status: "aviso",
         lojaId: loja.id,
         lojaNome: loja.nome,
-        origem: AGARRAMAIS_REPORT_SOURCE,
+        mensagem: `Nao foi possivel consultar o fechamento mensal da loja ${loja.nome} em ${periodo.competencia}.`,
       });
     }
   }
 
-  return itens;
+  return {
+    itens,
+    avisos,
+    periodo,
+  };
 }
 
 /**
@@ -798,16 +966,27 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
       },
     });
 
-    const dadosExternos = await fetchAgarraMaisAPI(options);
+    const {
+      itens: dadosExternos = [],
+      avisos = [],
+      periodo,
+    } = await fetchAgarraMaisAPI(options);
 
-    if (!dadosExternos || dadosExternos.length === 0) {
+    if (!dadosExternos.length) {
       return {
         sincronizados: 0,
         duplicados: 0,
         ignorados: 0,
         removidosValorZero: limpeza.count,
         detalhes: [
-          { status: "info", mensagem: "Nenhum dado novo na AgarraMais" },
+          ...(avisos.length
+            ? avisos
+            : [
+                {
+                  status: "info",
+                  mensagem: `Nenhum dado de fechamento mensal disponivel na AgarraMais para ${periodo?.competencia || "o periodo informado"}.`,
+                },
+              ]),
         ],
       };
     }
@@ -818,7 +997,7 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
       ignorados: 0,
       removidosValorZero: limpeza.count,
       erros: 0,
-      detalhes: [],
+      detalhes: [...avisos],
     };
 
     // Processa cada item externo
