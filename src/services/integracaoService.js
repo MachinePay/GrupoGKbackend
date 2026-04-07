@@ -972,12 +972,34 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
       periodo,
     } = await fetchAgarraMaisAPI(options);
 
+    // Remove pendências legadas do mesmo período (importações antigas não baseadas em fechamento mensal).
+    const limpezaLegadoPeriodo =
+      periodo?.inicio && periodo?.fim
+        ? await prisma.agenda.deleteMany({
+            where: {
+              empresaId,
+              origemExterna: true,
+              status: AgendaStatus.PENDENTE_INTEGRACAO,
+              data: {
+                gte: periodo.inicio,
+                lte: periodo.fim,
+              },
+              referenciaExternaId: {
+                not: {
+                  startsWith: "fechamento:",
+                },
+              },
+            },
+          })
+        : { count: 0 };
+
     if (!dadosExternos.length) {
       return {
         sincronizados: 0,
         duplicados: 0,
         ignorados: 0,
         removidosValorZero: limpeza.count,
+        removidosLegadoPeriodo: limpezaLegadoPeriodo.count,
         detalhes: [
           ...(avisos.length
             ? avisos
@@ -996,6 +1018,7 @@ async function syncAgarraMais(empresaId, usuarioId, options = {}) {
       duplicados: 0,
       ignorados: 0,
       removidosValorZero: limpeza.count,
+      removidosLegadoPeriodo: limpezaLegadoPeriodo.count,
       erros: 0,
       detalhes: [...avisos],
     };
