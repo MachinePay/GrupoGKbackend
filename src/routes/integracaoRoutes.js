@@ -19,6 +19,12 @@ router.get(
 router.get("/agarramais/sync", integracaoController.syncAgarraMais);
 
 /**
+ * GET /integracao/maisquiosque/sync?empresaId=1&referenceMonth=2026-03
+ * Dispara sincronização com API da MaisQuiosque
+ */
+router.get("/maisquiosque/sync", integracaoController.syncMaisQuiosque);
+
+/**
  * GET /integracao/pendencias?empresaId=1
  * Lista todos os itens pendentes de aprovação de uma empresa
  */

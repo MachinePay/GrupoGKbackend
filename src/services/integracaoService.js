@@ -18,6 +18,9 @@ const AGARRAMAIS_CARD_FEE_SOURCE = "AGARRAMAIS_CUSTO_TAXA_CARTAO";
 const AGARRAMAIS_VARIABLE_COST_SOURCE = "AGARRAMAIS_GASTO_VARIAVEL";
 const AGARRAMAIS_PRODUCT_COST_SOURCE = "AGARRAMAIS_CUSTO_PRODUTOS";
 const DEFAULT_REPORT_DAYS = 30;
+const MAISQUIOSQUE_CUSTO_SOURCE = "MAISQUIOSQUE_CUSTO_GERAL";
+const MAISQUIOSQUE_RECEITA_SOURCE = "MAISQUIOSQUE_RECEITA";
+const MAISQUIOSQUE_CUSTO_PREAPROVADO_SOURCE = "MAISQUIOSQUE_CUSTO_PRE_APROVADO";
 
 const FONTES_INTEGRACAO = [
   {
@@ -57,6 +60,14 @@ function isAgarraMaisConfigured() {
     process.env.AGARRAMAIS_API_URL &&
     process.env.AGARRAMAIS_EMAIL &&
     process.env.AGARRAMAIS_SENHA,
+  );
+}
+
+function isMaisQuiosqueConfigured() {
+  return Boolean(
+    process.env.MAISQUIOSQUE_API_URL &&
+    process.env.MAISQUIOSQUE_EMAIL &&
+    process.env.MAISQUIOSQUE_PASSWORD,
   );
 }
 
@@ -104,6 +115,267 @@ function getAgarraMaisConfig() {
           .filter(Boolean)
       : [],
   };
+}
+
+function getMaisQuiosqueConfig() {
+  const apiUrl = process.env.MAISQUIOSQUE_API_URL;
+  const email = process.env.MAISQUIOSQUE_EMAIL;
+  const password = process.env.MAISQUIOSQUE_PASSWORD;
+
+  if (!apiUrl || !email || !password) {
+    throw new AppError(
+      "Configure MAISQUIOSQUE_API_URL, MAISQUIOSQUE_EMAIL e MAISQUIOSQUE_PASSWORD para usar a integração MaisQuiosque.",
+      500,
+    );
+  }
+
+  return {
+    apiUrl: apiUrl.replace(/\/$/, ""),
+    email,
+    password,
+    timeoutMs: Number(process.env.MAISQUIOSQUE_TIMEOUT_MS || 15000),
+  };
+}
+
+async function requestMaisQuiosque(
+  path,
+  { method = "GET", token, body, params, timeoutMs } = {},
+) {
+  const config = getMaisQuiosqueConfig();
+  const url = new URL(`${config.apiUrl}${path}`);
+
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== "") {
+        url.searchParams.set(key, String(value));
+      }
+    });
+  }
+
+  const headers = { "Content-Type": "application/json" };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  const response = await fetch(url.toString(), {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(timeoutMs || config.timeoutMs),
+  });
+
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new AppError(
+      payload?.message ||
+        payload?.error?.message ||
+        payload?.error ||
+        `Falha na API MaisQuiosque (${response.status}).`,
+      502,
+    );
+  }
+
+  return payload;
+}
+
+async function authenticateMaisQuiosque() {
+  const config = getMaisQuiosqueConfig();
+  const response = await requestMaisQuiosque("/api/auth/login", {
+    method: "POST",
+    body: {
+      email: config.email,
+      password: config.password,
+    },
+  });
+
+  if (!response?.token) {
+    throw new AppError(
+      "A API MaisQuiosque não retornou token de autenticação.",
+      502,
+    );
+  }
+
+  return response.token;
+}
+
+async function fetchMaisQuiosqueAPI(options = {}) {
+  const token = await authenticateMaisQuiosque();
+  const { referenceMonth } = options;
+
+  // Determina o mês de referência: usa o informado ou o mês anterior fechado
+  let mesReferencia = referenceMonth;
+  if (!mesReferencia) {
+    const agora = new Date();
+    const mesAnterior = new Date(agora.getFullYear(), agora.getMonth() - 1, 1);
+    mesReferencia = `${mesAnterior.getFullYear()}-${String(mesAnterior.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  const params = { referenceMonth: mesReferencia };
+  const payload = await requestMaisQuiosque("/api/logistics/fechamentos", {
+    token,
+    params,
+  });
+
+  const fechamentos = Array.isArray(payload?.data) ? payload.data : [];
+  if (!fechamentos.length) {
+    return { itens: [], periodo: { competencia: mesReferencia }, avisos: [] };
+  }
+
+  // Usa o fechamento mais recente para o mês
+  const fechamento = fechamentos[fechamentos.length - 1];
+  const itens = [];
+  const dataReferencia = new Date(`${mesReferencia}-28T12:00:00`);
+
+  if (Number(fechamento.custoGeralAtivo) > 0) {
+    itens.push({
+      id: `maisquiosque:custo-geral:${mesReferencia}`,
+      descricao: `Custo Geral Ativo - MaisQuiosque`,
+      detalhe: `Origem: Fechamento mensal | Competencia: ${mesReferencia}`,
+      valor: Number(fechamento.custoGeralAtivo),
+      data: dataReferencia,
+      tipo: "CUSTO",
+      origem: MAISQUIOSQUE_CUSTO_SOURCE,
+    });
+  }
+
+  if (Number(fechamento.receitaVinculada) > 0) {
+    itens.push({
+      id: `maisquiosque:receita:${mesReferencia}`,
+      descricao: `Receita Vinculada - MaisQuiosque`,
+      detalhe: `Origem: Fechamento mensal | Competencia: ${mesReferencia}`,
+      valor: Number(fechamento.receitaVinculada),
+      data: dataReferencia,
+      tipo: "RECEITA",
+      origem: MAISQUIOSQUE_RECEITA_SOURCE,
+    });
+  }
+
+  if (Number(fechamento.custosAplicadosPreAprovados) > 0) {
+    itens.push({
+      id: `maisquiosque:custo-pre-aprovado:${mesReferencia}`,
+      descricao: `Custos Aplicados Pré-Aprovados - MaisQuiosque`,
+      detalhe: `Origem: Fechamento mensal | Competencia: ${mesReferencia}`,
+      valor: Number(fechamento.custosAplicadosPreAprovados),
+      data: dataReferencia,
+      tipo: "CUSTO",
+      origem: MAISQUIOSQUE_CUSTO_PREAPROVADO_SOURCE,
+    });
+  }
+
+  return {
+    itens,
+    periodo: { competencia: mesReferencia },
+    avisos: [],
+  };
+}
+
+async function syncMaisQuiosque(empresaId, usuarioId, options = {}) {
+  try {
+    const {
+      itens: dadosExternos = [],
+      avisos = [],
+      periodo,
+    } = await fetchMaisQuiosqueAPI(options);
+
+    if (!dadosExternos.length) {
+      return {
+        sincronizados: 0,
+        duplicados: 0,
+        ignorados: 0,
+        detalhes: [
+          ...(avisos.length
+            ? avisos
+            : [
+                {
+                  status: "info",
+                  mensagem: `Nenhum dado de fechamento disponível na MaisQuiosque para ${periodo?.competencia || "o período informado"}.`,
+                },
+              ]),
+        ],
+      };
+    }
+
+    const resultado = {
+      sincronizados: 0,
+      duplicados: 0,
+      ignorados: 0,
+      erros: 0,
+      detalhes: [...avisos],
+    };
+
+    for (const item of dadosExternos) {
+      try {
+        const valorItem = Number(item.valor || 0);
+        if (!(valorItem > 0)) {
+          resultado.ignorados += 1;
+          continue;
+        }
+
+        const jaExiste = await prisma.agenda.findFirst({
+          where: { referenciaExternaId: item.id, empresaId },
+        });
+
+        if (jaExiste) {
+          // Atualiza valor se mudou
+          if (Number(jaExiste.valor) !== valorItem) {
+            await prisma.agenda.update({
+              where: { id: jaExiste.id },
+              data: { valor: new Prisma.Decimal(valorItem) },
+            });
+          }
+          resultado.duplicados += 1;
+          resultado.detalhes.push({
+            status: "duplicado",
+            mensagem: `${item.descricao} já importado (valor atualizado se necessário)`,
+            referenciaExterna: item.id,
+          });
+          continue;
+        }
+
+        const tipoAgenda =
+          item.tipo === "RECEITA" ? AgendaTipo.RECEBER : AgendaTipo.PAGAR;
+
+        const agendaCriada = await prisma.agenda.create({
+          data: {
+            data: item.data,
+            titulo: item.descricao,
+            descricao: `Importado automaticamente da MaisQuiosque | ${item.detalhe}`,
+            valor: new Prisma.Decimal(valorItem),
+            prioridade: "ALTA",
+            status: AgendaStatus.PENDENTE_INTEGRACAO,
+            tipo: tipoAgenda,
+            origemExterna: true,
+            referenciaExternaId: item.id,
+            origem: item.origem,
+            empresaId,
+          },
+        });
+
+        resultado.sincronizados += 1;
+        resultado.detalhes.push({
+          status: "sucesso",
+          mensagem: `${item.descricao} importado com sucesso`,
+          agendaId: agendaCriada.id,
+          referenciaExterna: item.id,
+        });
+      } catch (erro) {
+        resultado.erros += 1;
+        resultado.detalhes.push({
+          status: "erro",
+          mensagem: `Erro ao importar ${item.descricao}: ${erro.message}`,
+          referenciaExterna: item.id,
+        });
+      }
+    }
+
+    return resultado;
+  } catch (erro) {
+    throw new AppError(
+      `Erro ao sincronizar com MaisQuiosque: ${erro.message}`,
+      500,
+    );
+  }
 }
 
 function getPeriodoReferencia(dataInicio, dataFim) {
@@ -1382,12 +1654,17 @@ async function listarEmpresasIntegradas() {
           return null;
         }
 
+        const syncDisponivel =
+          fonte.id === "maisquiosque"
+            ? isMaisQuiosqueConfigured()
+            : fonte.syncDisponivel;
+
         return {
           id: empresa.id,
           nome: empresa.nome,
           integracao: fonte.id,
           integracaoLabel: fonte.nome,
-          syncDisponivel: fonte.syncDisponivel,
+          syncDisponivel,
         };
       })
       .filter(Boolean);
@@ -1411,6 +1688,7 @@ async function listarEmpresasIntegradas() {
 module.exports = {
   fetchAgarraMaisAPI,
   syncAgarraMais,
+  syncMaisQuiosque,
   aprovarPendencia,
   rejeitarPendencia,
   listarPendencias,

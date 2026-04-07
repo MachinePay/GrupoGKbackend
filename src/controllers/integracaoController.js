@@ -43,6 +43,38 @@ async function syncAgarraMais(req, res, next) {
 }
 
 /**
+ * GET /integracao/maisquiosque/sync
+ * Dispara sincronização com API da MaisQuiosque
+ */
+async function syncMaisQuiosque(req, res, next) {
+  try {
+    const { empresaId, referenceMonth } = req.query;
+    const usuarioId = req.user?.id;
+
+    if (!usuarioId) {
+      throw new AppError("Usuario nao autenticado.", 401);
+    }
+
+    if (!empresaId) {
+      throw new AppError("empresaId é obrigatório como query parameter", 400);
+    }
+
+    const resultado = await integracaoService.syncMaisQuiosque(
+      Number(empresaId),
+      usuarioId,
+      { referenceMonth },
+    );
+
+    res.status(200).json({
+      mensagem: "Sincronização com MaisQuiosque concluída",
+      ...resultado,
+    });
+  } catch (erro) {
+    next(erro);
+  }
+}
+
+/**
  * GET /integracao/pendencias
  * Lista itens pendentes de aprovação
  */
@@ -182,6 +214,7 @@ async function listarEmpresasIntegradas(req, res, next) {
 
 module.exports = {
   syncAgarraMais,
+  syncMaisQuiosque,
   listarPendencias,
   aprovarPendencia,
   rejeitarPendencia,
