@@ -141,7 +141,7 @@ function getMaisQuiosqueConfig() {
 async function requestMaisQuiosque(
   path,
   { method = "GET", token, body, params, timeoutMs } = {},
-) {
+) { 
   const config = getMaisQuiosqueConfig();
   const url = new URL(`${config.apiUrl}${path}`);
 
