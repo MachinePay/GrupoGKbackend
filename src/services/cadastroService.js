@@ -117,6 +117,7 @@ async function createConta(payload) {
     data: {
       nome: payload.nome.trim(),
       banco: payload.banco.trim(),
+      observacoes: payload.observacoes?.trim() || null,
       saldoAtual:
         saldoValue !== undefined ? toDecimal(saldoValue) : toDecimal(0),
     },
@@ -145,6 +146,7 @@ async function updateConta(id, payload) {
     data: {
       nome: payload.nome.trim(),
       banco: payload.banco.trim(),
+      observacoes: payload.observacoes?.trim() || null,
     },
   });
 }

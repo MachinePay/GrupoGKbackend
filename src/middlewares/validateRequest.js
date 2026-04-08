@@ -382,7 +382,7 @@ function validateUpdateEmpresa(req, _res, next) {
  * @returns {void}
  */
 function validateCreateConta(req, _res, next) {
-  const { nome, banco, saldoAtual } = req.body;
+  const { nome, banco, saldoAtual, observacoes } = req.body;
 
   if (!nome || typeof nome !== "string") {
     return next(
@@ -406,6 +406,10 @@ function validateCreateConta(req, _res, next) {
         400,
       ),
     );
+  }
+
+  if (observacoes !== undefined && typeof observacoes !== "string") {
+    return next(new AppError("Campo observacoes deve ser texto.", 400));
   }
 
   return next();

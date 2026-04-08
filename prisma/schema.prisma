@@ -21,6 +21,7 @@ model ContaBancaria {
   id                   Int             @id @default(autoincrement())
   nome                 String
   banco                String
+  observacoes          String?
   saldoAtual           Decimal         @default(0) @map("saldo_atual") @db.Decimal(14, 2)
   movimentacoesOrigem  Movimentacao[]  @relation("ContaOrigem")
   movimentacoesDestino Movimentacao[]  @relation("ContaDestino")
