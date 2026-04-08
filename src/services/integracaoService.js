@@ -92,6 +92,25 @@ function getFontesAtivas() {
   });
 }
 
+function normalizeCompanyName(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function getFonteByEmpresaNome(fontesAtivas, nomeEmpresa) {
+  const nomeNormalizado = normalizeCompanyName(nomeEmpresa);
+
+  return fontesAtivas.find((item) =>
+    item.matchers.some(
+      (matcher) => nomeNormalizado === normalizeCompanyName(matcher),
+    ),
+  );
+}
+
 function getAgarraMaisConfig() {
   const apiUrl = process.env.AGARRAMAIS_API_URL;
   const email = process.env.AGARRAMAIS_EMAIL;
@@ -141,7 +160,7 @@ function getMaisQuiosqueConfig() {
 async function requestMaisQuiosque(
   path,
   { method = "GET", token, body, params, timeoutMs } = {},
-) { 
+) {
   const config = getMaisQuiosqueConfig();
   const url = new URL(`${config.apiUrl}${path}`);
 
@@ -1690,11 +1709,7 @@ async function listarEmpresasIntegradas() {
 
     const empresasIntegradas = empresas
       .map((empresa) => {
-        const nomeNormalizado = String(empresa.nome || "").toLowerCase();
-
-        const fonte = fontesAtivas.find((item) =>
-          item.matchers.some((matcher) => nomeNormalizado.includes(matcher)),
-        );
+        const fonte = getFonteByEmpresaNome(fontesAtivas, empresa.nome);
 
         if (!fonte) {
           return null;
