@@ -72,28 +72,46 @@ model Movimentacao {
   @@map("movimentacoes")
 }
 
+model Fornecedor {
+  id          Int       @id @default(autoincrement())
+  nome        String    @unique
+  descricao   String?
+  ativo       Boolean   @default(true)
+  agendaItens Agenda[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("fornecedores")
+}
+
 model Agenda {
-  id                    Int          @id @default(autoincrement())
+  id                    Int              @id @default(autoincrement())
   data                  DateTime
   titulo                String
   descricao             String?
   origem                String?
-  valor                 Decimal      @db.Decimal(14, 2)
+  origemTipo            AgendaOrigem?    @map("origem_tipo")
+  tipoPagamento         AgendaTipoPagamento? @map("tipo_pagamento")
+  valor                 Decimal          @db.Decimal(14, 2)
   prioridade            String
   status                AgendaStatus
   tipo                  AgendaTipo
-  origemExterna         Boolean      @default(false) @map("origem_externa")
-  referenciaExternaId   String?      @map("referencia_externa_id")
-  usuarioAprovadorId    Int?         @map("usuario_aprovador_id")
-  dataAprovacao         DateTime?    @map("data_aprovacao")
-  empresaId             Int          @map("empresa_id")
-  empresa               Empresa      @relation(fields: [empresaId], references: [id])
-  usuarioAprovador      Usuario?     @relation(fields: [usuarioAprovadorId], references: [id])
-  createdAt             DateTime     @default(now())
-  updatedAt             DateTime     @updatedAt
+  recurrenteAte         DateTime?        @map("recorrente_ate")
+  fornecedorId          Int?             @map("fornecedor_id")
+  fornecedor            Fornecedor?      @relation(fields: [fornecedorId], references: [id])
+  origemExterna         Boolean          @default(false) @map("origem_externa")
+  referenciaExternaId   String?          @map("referencia_externa_id")
+  usuarioAprovadorId    Int?             @map("usuario_aprovador_id")
+  dataAprovacao         DateTime?        @map("data_aprovacao")
+  empresaId             Int              @map("empresa_id")
+  empresa               Empresa          @relation(fields: [empresaId], references: [id])
+  usuarioAprovador      Usuario?         @relation(fields: [usuarioAprovadorId], references: [id])
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
   @@index([data, status, origemExterna])
   @@index([referenciaExternaId])
+  @@index([fornecedorId])
   @@map("agenda")
 }
 
@@ -165,6 +183,22 @@ enum AgendaStatus {
 enum AgendaTipo {
   PAGAR
   RECEBER
+}
+
+enum AgendaOrigem {
+  DOACAO
+  FORNECEDOR
+  CF
+  CV
+  DIVERSOS
+  FP
+}
+
+enum AgendaTipoPagamento {
+  PIX
+  TRANSFERENCIA
+  CHEQUE
+  BOLETO
 }
 
 enum PerfilUsuario {

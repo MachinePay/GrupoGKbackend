@@ -38,7 +38,7 @@ function buildAgendaDateFilter(dataInicio, dataFim) {
 
 /**
  * Lista os itens da agenda com filtros opcionais por periodo.
- * @param {{ dataInicio?: string, dataFim?: string, status?: string, tipo?: string }} filters Filtros da consulta.
+ * @param {{ dataInicio?: string, dataFim?: string, status?: string, tipo?: string, empresaId?: number | string }} filters Filtros da consulta.
  * @returns {Promise<object[]>}
  */
 async function getAgendaItems(filters) {
@@ -63,6 +63,12 @@ async function getAgendaItems(filters) {
     where,
     include: {
       empresa: {
+        select: {
+          id: true,
+          nome: true,
+        },
+      },
+      fornecedor: {
         select: {
           id: true,
           nome: true,
@@ -105,6 +111,12 @@ async function getAgendaSettlementHistory(filters) {
             nome: true,
           },
         },
+        fornecedor: {
+          select: {
+            id: true,
+            nome: true,
+          },
+        },
       },
       orderBy: [{ updatedAt: "desc" }, { data: "desc" }],
       skip: (page - 1) * limit,
@@ -128,9 +140,24 @@ async function getAgendaSettlementHistory(filters) {
 }
 
 /**
- * Cria um item de agenda para pagar/receber.
- * @param {{ data: string, titulo: string, descricao?: string, valor: number | string, prioridade: string, status: string, tipo: string, empresaId: number }} payload Dados do item.
- * @returns {Promise<object>}
+ * Retorna lista de fornecedores ativos.
+ * @returns {Promise<object[]>}
+ */
+async function getFornecedores() {
+  return prisma.fornecedor.findMany({
+    where: { ativo: true },
+    orderBy: { nome: "asc" },
+    select: {
+      id: true,
+      nome: true,
+    },
+  });
+}
+
+/**
+ * Cria um item de agenda com suporte a novos campos e recorrência automática.
+ * @param {{ data: string, titulo: string, descricao?: string, valor: number | string, prioridade: string, status: string, tipo: string, empresaId: number, origem?: string, origemTipo?: string, tipoPagamento?: string, fornecedorId?: number, recurrenteAte?: string }} payload Dados do item.
+ * @returns {Promise<object | object[]>}
  */
 async function createAgendaItem(payload) {
   const empresa = await prisma.empresa.findUnique({
@@ -141,33 +168,88 @@ async function createAgendaItem(payload) {
     throw new AppError("Empresa nao encontrada para vincular agenda.", 404);
   }
 
-  return prisma.agenda.create({
+  // Validar fornecedor se origemTipo = FORNECEDOR
+  if (payload.origemTipo === "FORNECEDOR" && payload.fornecedorId) {
+    const fornecedor = await prisma.fornecedor.findUnique({
+      where: { id: Number(payload.fornecedorId) },
+    });
+    if (!fornecedor) {
+      throw new AppError("Fornecedor nao encontrado.", 404);
+    }
+  }
+
+  const data = new Date(payload.data);
+  const items = [];
+
+  // Criar item inicial
+  const item = await prisma.agenda.create({
     data: {
-      data: new Date(payload.data),
+      data,
       titulo: payload.titulo.trim(),
       descricao: payload.descricao?.trim() || null,
       origem: payload.origem?.trim() || null,
+      origemTipo: payload.origemTipo || null,
+      tipoPagamento: payload.tipoPagamento || null,
       valor: toDecimal(payload.valor),
       prioridade: payload.prioridade.trim(),
       status: payload.status,
       tipo: payload.tipo,
+      recurrenteAte: payload.recurrenteAte
+        ? new Date(payload.recurrenteAte)
+        : null,
+      fornecedorId: payload.fornecedorId ? Number(payload.fornecedorId) : null,
       empresaId: Number(payload.empresaId),
     },
     include: {
-      empresa: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
+      empresa: { select: { id: true, nome: true } },
+      fornecedor: { select: { id: true, nome: true } },
     },
   });
+
+  items.push(item);
+
+  // Se há recorrência, criar itens para os próximos meses
+  if (payload.recurrenteAte) {
+    const recurrenteAte = new Date(payload.recurrenteAte);
+    let currentDate = new Date(data);
+    currentDate.setMonth(currentDate.getMonth() + 1);
+
+    while (currentDate <= recurrenteAte) {
+      const recurrentItem = await prisma.agenda.create({
+        data: {
+          data: new Date(currentDate),
+          titulo: payload.titulo.trim(),
+          descricao: payload.descricao?.trim() || null,
+          origem: payload.origem?.trim() || null,
+          origemTipo: payload.origemTipo || null,
+          tipoPagamento: payload.tipoPagamento || null,
+          valor: toDecimal(payload.valor),
+          prioridade: payload.prioridade.trim(),
+          status: payload.status,
+          tipo: payload.tipo,
+          recurrenteAte,
+          fornecedorId: payload.fornecedorId
+            ? Number(payload.fornecedorId)
+            : null,
+          empresaId: Number(payload.empresaId),
+        },
+        include: {
+          empresa: { select: { id: true, nome: true } },
+          fornecedor: { select: { id: true, nome: true } },
+        },
+      });
+      items.push(recurrentItem);
+      currentDate.setMonth(currentDate.getMonth() + 1);
+    }
+  }
+
+  return items.length === 1 ? item : items;
 }
 
 /**
  * Atualiza um item da agenda antes da baixa.
  * @param {number | string} agendaId Identificador do item.
- * @param {{ data: string, titulo: string, descricao?: string, valor: number | string, prioridade: string, status: string, tipo: string, empresaId: number }} payload Dados do item.
+ * @param {{ data: string, titulo: string, descricao?: string, valor: number | string, prioridade: string, status: string, tipo: string, empresaId: number, origem?: string, origemTipo?: string, tipoPagamento?: string, fornecedorId?: number, recurrenteAte?: string }} payload Dados do item.
  * @returns {Promise<object>}
  */
 async function updateAgendaItem(agendaId, payload) {
@@ -191,6 +273,16 @@ async function updateAgendaItem(agendaId, payload) {
     throw new AppError("Empresa nao encontrada para vincular agenda.", 404);
   }
 
+  // Validar fornecedor se origemTipo = FORNECEDOR
+  if (payload.origemTipo === "FORNECEDOR" && payload.fornecedorId) {
+    const fornecedor = await prisma.fornecedor.findUnique({
+      where: { id: Number(payload.fornecedorId) },
+    });
+    if (!fornecedor) {
+      throw new AppError("Fornecedor nao encontrado.", 404);
+    }
+  }
+
   return prisma.agenda.update({
     where: { id: Number(agendaId) },
     data: {
@@ -198,19 +290,21 @@ async function updateAgendaItem(agendaId, payload) {
       titulo: payload.titulo.trim(),
       descricao: payload.descricao?.trim() || null,
       origem: payload.origem?.trim() || null,
+      origemTipo: payload.origemTipo || null,
+      tipoPagamento: payload.tipoPagamento || null,
       valor: toDecimal(payload.valor),
       prioridade: payload.prioridade.trim(),
       status: payload.status,
       tipo: payload.tipo,
+      recurrenteAte: payload.recurrenteAte
+        ? new Date(payload.recurrenteAte)
+        : null,
+      fornecedorId: payload.fornecedorId ? Number(payload.fornecedorId) : null,
       empresaId: Number(payload.empresaId),
     },
     include: {
-      empresa: {
-        select: {
-          id: true,
-          nome: true,
-        },
-      },
+      empresa: { select: { id: true, nome: true } },
+      fornecedor: { select: { id: true, nome: true } },
     },
   });
 }
@@ -317,6 +411,7 @@ async function settleAgendaItem(agendaId, payload) {
 module.exports = {
   createAgendaItem,
   deleteAgendaItem,
+  getFornecedores,
   getAgendaSettlementHistory,
   getAgendaItems,
   settleAgendaItem,
