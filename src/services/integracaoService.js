@@ -120,11 +120,12 @@ function getAgarraMaisConfig() {
 function getMaisQuiosqueConfig() {
   const apiUrl = process.env.MAISQUIOSQUE_API_URL;
   const email = process.env.MAISQUIOSQUE_EMAIL;
-  const password = process.env.MAISQUIOSQUE_PASSWORD;
+  const password =
+    process.env.MAISQUIOSQUE_PASSWORD || process.env.MAISQUIOSQUE_SENHA;
 
   if (!apiUrl || !email || !password) {
     throw new AppError(
-      "Configure MAISQUIOSQUE_API_URL, MAISQUIOSQUE_EMAIL e MAISQUIOSQUE_PASSWORD para usar a integração MaisQuiosque.",
+      "Configure MAISQUIOSQUE_API_URL, MAISQUIOSQUE_EMAIL e MAISQUIOSQUE_PASSWORD (ou MAISQUIOSQUE_SENHA) para usar a integração MaisQuiosque.",
       500,
     );
   }
@@ -189,14 +190,22 @@ async function authenticateMaisQuiosque() {
     },
   });
 
-  if (!response?.token) {
+  const token =
+    response?.token ||
+    response?.accessToken ||
+    response?.data?.token ||
+    response?.data?.accessToken ||
+    response?.data?.data?.token ||
+    response?.data?.data?.accessToken;
+
+  if (!token) {
     throw new AppError(
       "A API MaisQuiosque não retornou token de autenticação.",
       502,
     );
   }
 
-  return response.token;
+  return token;
 }
 
 async function fetchMaisQuiosqueAPI(options = {}) {
