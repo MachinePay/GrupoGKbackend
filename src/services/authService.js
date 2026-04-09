@@ -41,6 +41,42 @@ function generateToken(user) {
 }
 
 /**
+ * Sincroniza usuario admin padrao com variaveis de ambiente para recuperacao de acesso.
+ * @param {string} email Email informado no login.
+ * @returns {Promise<void>}
+ */
+async function syncSeedAdminForLogin(email) {
+  const seedEmail = String(process.env.SEED_ADMIN_EMAIL || "")
+    .trim()
+    .toLowerCase();
+  const seedPassword = process.env.SEED_ADMIN_PASSWORD;
+  const seedNome = (process.env.SEED_ADMIN_NOME || "Administrador").trim();
+
+  if (!seedEmail || !seedPassword || email !== seedEmail) {
+    return;
+  }
+
+  const senhaHash = await bcrypt.hash(seedPassword, 10);
+
+  await prisma.usuario.upsert({
+    where: { email: seedEmail },
+    update: {
+      nome: seedNome,
+      senhaHash,
+      perfil: "ADMIN",
+      ativo: true,
+    },
+    create: {
+      nome: seedNome,
+      email: seedEmail,
+      senhaHash,
+      perfil: "ADMIN",
+      ativo: true,
+    },
+  });
+}
+
+/**
  * Cria novo usuario por fluxo administrativo.
  * @param {{ nome: string, email: string, senha: string, perfil?: "ADMIN" | "FINANCEIRO" }} payload Dados do usuario.
  * @returns {Promise<object>}
@@ -76,6 +112,8 @@ async function createUser(payload) {
  */
 async function login(payload) {
   const email = payload.email.trim().toLowerCase();
+
+  await syncSeedAdminForLogin(email);
 
   const usuario = await prisma.usuario.findUnique({ where: { email } });
 
