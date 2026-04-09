@@ -1481,11 +1481,31 @@ async function aprovarPendencia(agendaId, usuarioId, opcoes = {}) {
     const valorFinal = opcoes.valorAjustado
       ? new Prisma.Decimal(opcoes.valorAjustado)
       : item.valor;
+    const dataEfetiva = opcoes.dataAjustada
+      ? new Date(opcoes.dataAjustada)
+      : new Date(item.data);
+
+    if (Number.isNaN(dataEfetiva.getTime())) {
+      throw new AppError("Data inválida para aprovação", 400);
+    }
+
+    dataEfetiva.setHours(0, 0, 0, 0);
     const classificacaoPadrao = mapCategoria(item.titulo);
     const categoriaFinal =
       opcoes.categoriaAjustada || classificacaoPadrao.categoria;
     const tipoDespesaFinal =
       opcoes.tipoDespesaAjustada || classificacaoPadrao.tipoDespesa;
+
+    const contaIdNumerica =
+      opcoes.contaId === undefined ||
+      opcoes.contaId === null ||
+      opcoes.contaId === ""
+        ? null
+        : Number(opcoes.contaId);
+
+    if (contaIdNumerica !== null && Number.isNaN(contaIdNumerica)) {
+      throw new AppError("Conta bancária inválida para aprovação", 400);
+    }
 
     if (item.origem === AGARRAMAIS_REPORT_SOURCE) {
       await prisma.agenda.update({
@@ -1500,21 +1520,56 @@ async function aprovarPendencia(agendaId, usuarioId, opcoes = {}) {
       return { agendaId, movimentacaoId: null, revisado: true };
     }
 
+    const inicioHoje = new Date();
+    inicioHoje.setHours(0, 0, 0, 0);
+
+    if (dataEfetiva > inicioHoje) {
+      await prisma.agenda.update({
+        where: { id: agendaId },
+        data: {
+          data: dataEfetiva,
+          valor: valorFinal,
+          status: AgendaStatus.PREVISTO,
+          origemExterna: false,
+          usuarioAprovadorId: usuarioId,
+          dataAprovacao: new Date(),
+        },
+      });
+
+      return {
+        agendaId,
+        movimentacaoId: null,
+        agendado: true,
+        mensagem: "Item aprovado para baixa futura no calendario",
+      };
+    }
+
     let contaOrigemId = null;
     let contaDestinoId = null;
 
     if (item.tipo === AgendaTipo.PAGAR) {
       // Para pagamentos, precisa da conta origem
-      contaOrigemId = opcoes.contaId || null;
+      contaOrigemId = contaIdNumerica;
     } else {
       // Para recebimentos, conta destino
-      contaDestinoId = opcoes.contaId || null;
+      contaDestinoId = contaIdNumerica;
     }
 
     const resultado = await prisma.$transaction(async (tx) => {
+      if (contaOrigemId || contaDestinoId) {
+        const contaExistente = await tx.contaBancaria.findUnique({
+          where: { id: contaOrigemId || contaDestinoId },
+          select: { id: true },
+        });
+
+        if (!contaExistente) {
+          throw new AppError("Conta bancária não encontrada", 404);
+        }
+      }
+
       const movimentacao = await tx.movimentacao.create({
         data: {
-          data: new Date(item.data),
+          data: dataEfetiva,
           valor: valorFinal,
           tipo:
             item.tipo === AgendaTipo.PAGAR
@@ -1554,6 +1609,8 @@ async function aprovarPendencia(agendaId, usuarioId, opcoes = {}) {
       await tx.agenda.update({
         where: { id: agendaId },
         data: {
+          data: dataEfetiva,
+          valor: valorFinal,
           status: AgendaStatus.REALIZADO,
           usuarioAprovadorId: usuarioId,
           dataAprovacao: new Date(),

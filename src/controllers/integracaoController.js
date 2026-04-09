@@ -128,8 +128,13 @@ async function listarPendencias(req, res, next) {
 async function aprovarPendencia(req, res, next) {
   try {
     const { agendaId } = req.params;
-    const { valorAjustado, categoriaAjustada, tipoDespesaAjustada, contaId } =
-      req.body;
+    const {
+      valorAjustado,
+      categoriaAjustada,
+      tipoDespesaAjustada,
+      contaId,
+      dataAjustada,
+    } = req.body;
     const usuarioId = req.user?.id;
 
     if (!usuarioId) {
@@ -148,6 +153,7 @@ async function aprovarPendencia(req, res, next) {
         categoriaAjustada,
         tipoDespesaAjustada,
         contaId,
+        dataAjustada,
       },
     );
 
