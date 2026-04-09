@@ -15,7 +15,7 @@ function decimalToNumber(value) {
  * @returns {Promise<object>}
  */
 async function getConsolidatedDashboard() {
-  const [entradas, saidas] = await Promise.all([
+  const [entradas, saidas, contas] = await Promise.all([
     prisma.movimentacao.aggregate({
       _sum: { valor: true },
       where: { tipo: "ENTRADA", status: "REALIZADO" },
@@ -24,15 +24,22 @@ async function getConsolidatedDashboard() {
       _sum: { valor: true },
       where: { tipo: "SAIDA", status: "REALIZADO" },
     }),
+    prisma.contaBancaria.findMany({
+      select: { saldoAtual: true },
+    }),
   ]);
 
   const totalEntradas = decimalToNumber(entradas._sum.valor);
   const totalSaidas = decimalToNumber(saidas._sum.valor);
+  const saldoConsolidado = contas.reduce(
+    (sum, conta) => sum + decimalToNumber(conta.saldoAtual),
+    0,
+  );
 
   return {
     totalEntradas,
     totalSaidas,
-    saldoLiquido: totalEntradas - totalSaidas,
+    saldoLiquido: saldoConsolidado,
   };
 }
 
