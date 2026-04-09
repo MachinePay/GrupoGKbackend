@@ -1699,7 +1699,9 @@ async function listarPendencias(empresaId) {
                 item.origem === AGARRAMAIS_VARIABLE_COST_SOURCE ||
                 item.origem === AGARRAMAIS_PRODUCT_COST_SOURCE
               ? "CUSTO_DASHBOARD"
-              : "GASTO_FIXO",
+              : item.tipo === AgendaTipo.RECEBER
+                ? "RECEITA"
+                : "GASTO_FIXO",
       permiteAprovacaoFinanceira: item.origem !== AGARRAMAIS_REPORT_SOURCE,
     }));
   } catch (erro) {
