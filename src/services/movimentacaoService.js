@@ -310,37 +310,36 @@ async function validateBusinessRules(empresa, payload, client = prisma) {
   const isSelfMachine = isSelfMachineEmpresa(empresa.nome);
 
   if (isSelfMachine) {
-    if (!saasClienteId) {
+    if (saasClienteId && !saasLancamentoTipo) {
       throw new AppError(
-        "Movimentacoes da SelfMachine exigem selecao de cliente SaaS.",
+        "Informe o tipo de lancamento ao selecionar cliente SaaS.",
+        400,
+      );
+    }
+
+    if (saasLancamentoTipo && !saasClienteId) {
+      throw new AppError(
+        "Informe o cliente SaaS ao selecionar tipo de lancamento.",
         400,
       );
     }
 
     if (
-      !saasLancamentoTipo ||
+      saasLancamentoTipo &&
       !["MENSALIDADE", "PAGAMENTO"].includes(saasLancamentoTipo)
     ) {
-      throw new AppError(
-        "Movimentacoes da SelfMachine exigem tipo de lancamento (MENSALIDADE ou PAGAMENTO).",
-        400,
-      );
+      throw new AppError("Tipo de lancamento SelfMachine invalido.", 400);
     }
 
-    if (tipo !== MovimentacaoTipo.ENTRADA) {
-      throw new AppError(
-        "Lancamentos da SelfMachine devem ser registrados como ENTRADA.",
-        400,
-      );
-    }
+    if (saasClienteId) {
+      const contrato = await client.saasCliente.findUnique({
+        where: { id: Number(saasClienteId) },
+        select: { id: true },
+      });
 
-    const contrato = await client.saasCliente.findUnique({
-      where: { id: Number(saasClienteId) },
-      select: { id: true },
-    });
-
-    if (!contrato) {
-      throw new AppError("Cliente SaaS informado nao encontrado.", 404);
+      if (!contrato) {
+        throw new AppError("Cliente SaaS informado nao encontrado.", 404);
+      }
     }
   }
 

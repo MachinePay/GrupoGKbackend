@@ -177,6 +177,7 @@ enum MovimentacaoTipo {
 
 enum MovimentacaoCategoria {
   PEDIDO
+  SISTEMA
   COMISSAO
   RECOLHE_LOJAS
   BOLETO

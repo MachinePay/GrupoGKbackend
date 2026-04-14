@@ -1,0 +1,1 @@
+ALTER TYPE "MovimentacaoCategoria" ADD VALUE IF NOT EXISTS 'SISTEMA';
