@@ -127,31 +127,36 @@ function getStatusMensalidadeCalculado(contrato) {
  * @returns {Promise<void>}
  */
 async function refreshMensalidadeStatuses() {
-  const contratos = await prisma.saasCliente.findMany({
-    select: {
-      id: true,
-      statusSistema: true,
-      statusMensalidade: true,
-      dataInicioMensalidade: true,
-      ultimaMensalidadePagaEm: true,
-    },
-  });
+  try {
+    const contratos = await prisma.saasCliente.findMany({
+      select: {
+        id: true,
+        statusSistema: true,
+        statusMensalidade: true,
+        dataInicioMensalidade: true,
+        ultimaMensalidadePagaEm: true,
+      },
+    });
 
-  const updates = contratos
-    .map((contrato) => ({
-      id: contrato.id,
-      ...getStatusMensalidadeCalculado(contrato),
-    }))
-    .filter((item) => item.needsUpdate)
-    .map((item) =>
-      prisma.saasCliente.update({
-        where: { id: item.id },
-        data: { statusMensalidade: item.statusMensalidade },
-      }),
-    );
+    const updates = contratos
+      .map((contrato) => ({
+        id: contrato.id,
+        ...getStatusMensalidadeCalculado(contrato),
+      }))
+      .filter((item) => item.needsUpdate)
+      .map((item) =>
+        prisma.saasCliente.update({
+          where: { id: item.id },
+          data: { statusMensalidade: item.statusMensalidade },
+        }),
+      );
 
-  if (updates.length > 0) {
-    await prisma.$transaction(updates);
+    if (updates.length > 0) {
+      await prisma.$transaction(updates);
+    }
+  } catch (err) {
+    console.error("Erro em refreshMensalidadeStatuses:", err);
+    // Silently fail, não interrompe listagem
   }
 }
 
@@ -386,7 +391,12 @@ function mapPayloadToData(payload) {
  * @returns {Promise<object[]>}
  */
 async function listSaasContratos() {
-  await refreshMensalidadeStatuses();
+  try {
+    await refreshMensalidadeStatuses();
+  } catch (err) {
+    console.error("Erro ao atualizar status de mensalidade:", err);
+    // Continua mesmo se houver erro na atualização
+  }
 
   const data = await prisma.saasCliente.findMany({
     orderBy: [{ statusSistema: "asc" }, { nomeCliente: "asc" }],
