@@ -7,6 +7,7 @@ const {
 } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
+const selfMachineService = require("./selfMachineService");
 
 const TIPOS_DESPESA_CUSTO_FIXO = [
   "DESPESAS_ADMINISTRATIVAS",
@@ -42,6 +43,39 @@ function formatEnumLabel(value) {
   }
 
   return String(value).replaceAll("_", " ");
+}
+
+/**
+ * Verifica se a empresa selecionada e a SelfMachine.
+ * @param {string} nomeEmpresa
+ * @returns {boolean}
+ */
+function isSelfMachineEmpresa(nomeEmpresa) {
+  return (
+    String(nomeEmpresa || "")
+      .trim()
+      .toLowerCase() === "selfmachine"
+  );
+}
+
+/**
+ * Retorna inicio/fim do mes da data informada.
+ * @param {Date} date
+ * @returns {{ start: Date, end: Date }}
+ */
+function monthRange(date) {
+  const start = new Date(date.getFullYear(), date.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(
+    date.getFullYear(),
+    date.getMonth() + 1,
+    0,
+    23,
+    59,
+    59,
+    999,
+  );
+
+  return { start, end };
 }
 
 /**
@@ -187,7 +221,15 @@ function validateAccountsByType(payload) {
  * @returns {Promise<void>}
  */
 async function validateBusinessRules(empresa, payload, client = prisma) {
-  const { projetoId, subcategoria, categoria, tipoDespesa } = payload;
+  const {
+    projetoId,
+    subcategoria,
+    categoria,
+    tipoDespesa,
+    saasClienteId,
+    saasLancamentoTipo,
+    tipo,
+  } = payload;
 
   if (empresa.nome === "MaisQuiosque" && !projetoId) {
     throw new AppError(
@@ -263,6 +305,90 @@ async function validateBusinessRules(empresa, payload, client = prisma) {
       "tipoDespesa so pode ser usado com CUSTO_FIXO ou CUSTO_VARIAVEL.",
       400,
     );
+  }
+
+  const isSelfMachine = isSelfMachineEmpresa(empresa.nome);
+
+  if (isSelfMachine) {
+    if (!saasClienteId) {
+      throw new AppError(
+        "Movimentacoes da SelfMachine exigem selecao de cliente SaaS.",
+        400,
+      );
+    }
+
+    if (
+      !saasLancamentoTipo ||
+      !["MENSALIDADE", "PAGAMENTO"].includes(saasLancamentoTipo)
+    ) {
+      throw new AppError(
+        "Movimentacoes da SelfMachine exigem tipo de lancamento (MENSALIDADE ou PAGAMENTO).",
+        400,
+      );
+    }
+
+    if (tipo !== MovimentacaoTipo.ENTRADA) {
+      throw new AppError(
+        "Lancamentos da SelfMachine devem ser registrados como ENTRADA.",
+        400,
+      );
+    }
+
+    const contrato = await client.saasCliente.findUnique({
+      where: { id: Number(saasClienteId) },
+      select: { id: true },
+    });
+
+    if (!contrato) {
+      throw new AppError("Cliente SaaS informado nao encontrado.", 404);
+    }
+  }
+
+  if (!isSelfMachine && (saasClienteId || saasLancamentoTipo)) {
+    throw new AppError(
+      "Campos SelfMachine so podem ser usados quando a empresa selecionada for SelfMachine.",
+      400,
+    );
+  }
+}
+
+/**
+ * Aplica sincronizacao da mensalidade do cliente SaaS apos criar movimentacao.
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx
+ * @param {object} movimentacao
+ * @param {string} nomeEmpresa
+ * @returns {Promise<void>}
+ */
+async function syncSelfMachineFromMovimentacao(tx, movimentacao, nomeEmpresa) {
+  if (!isSelfMachineEmpresa(nomeEmpresa)) {
+    return;
+  }
+
+  if (!movimentacao.saasClienteId || !movimentacao.saasLancamentoTipo) {
+    return;
+  }
+
+  if (movimentacao.saasLancamentoTipo !== "MENSALIDADE") {
+    return;
+  }
+
+  if (movimentacao.status === MovimentacaoStatus.REALIZADO) {
+    await selfMachineService.registerMensalidadePagamento(
+      movimentacao.saasClienteId,
+      new Date(movimentacao.data),
+      tx,
+    );
+    return;
+  }
+
+  if (movimentacao.status === MovimentacaoStatus.PREVISTO) {
+    await tx.saasCliente.update({
+      where: { id: movimentacao.saasClienteId },
+      data: {
+        statusMensalidade: "EM_ABERTO",
+        ultimoPedidoPagamentoAt: new Date(),
+      },
+    });
   }
 }
 
@@ -340,6 +466,10 @@ async function createMovimentacao(payload, options = {}) {
         subcategoria: payload.subcategoria || null,
         empresaId: Number(payload.empresaId),
         projetoId: payload.projetoId ? Number(payload.projetoId) : null,
+        saasClienteId: payload.saasClienteId
+          ? Number(payload.saasClienteId)
+          : null,
+        saasLancamentoTipo: payload.saasLancamentoTipo || null,
         contaOrigemId: payload.contaOrigemId
           ? Number(payload.contaOrigemId)
           : null,
@@ -350,12 +480,14 @@ async function createMovimentacao(payload, options = {}) {
       include: {
         empresa: true,
         projeto: true,
+        saasCliente: true,
         contaOrigem: true,
         contaDestino: true,
       },
     });
 
     await updateAccountBalances(tx, payload);
+    await syncSelfMachineFromMovimentacao(tx, created, empresa.nome);
 
     if (payload.status === MovimentacaoStatus.PREVISTO) {
       const marker = `[AUTO_MOV_ID:${created.id}]`;
@@ -383,9 +515,13 @@ async function deleteMovimentacao(movimentacaoId) {
       where: { id: Number(movimentacaoId) },
       select: {
         id: true,
+        data: true,
+        empresaId: true,
         tipo: true,
         valor: true,
         status: true,
+        saasClienteId: true,
+        saasLancamentoTipo: true,
         contaOrigemId: true,
         contaDestinoId: true,
       },
@@ -455,6 +591,52 @@ async function deleteMovimentacao(movimentacaoId) {
     }
 
     await tx.movimentacao.delete({ where: { id: movimentacao.id } });
+
+    if (
+      movimentacao.saasClienteId &&
+      movimentacao.saasLancamentoTipo === "MENSALIDADE"
+    ) {
+      if (movimentacao.status === MovimentacaoStatus.REALIZADO) {
+        const { start, end } = monthRange(new Date(movimentacao.data));
+
+        const ultimoPagamentoMes = await tx.movimentacao.findFirst({
+          where: {
+            saasClienteId: movimentacao.saasClienteId,
+            saasLancamentoTipo: "MENSALIDADE",
+            status: MovimentacaoStatus.REALIZADO,
+            data: {
+              gte: start,
+              lte: end,
+            },
+          },
+          orderBy: [{ data: "desc" }, { createdAt: "desc" }],
+          select: { data: true },
+        });
+
+        if (ultimoPagamentoMes) {
+          await selfMachineService.registerMensalidadePagamento(
+            movimentacao.saasClienteId,
+            new Date(ultimoPagamentoMes.data),
+            tx,
+          );
+        } else {
+          await tx.saasCliente.update({
+            where: { id: movimentacao.saasClienteId },
+            data: { ultimaMensalidadePagaEm: null },
+          });
+
+          await selfMachineService.recomputeContratoMensalidadeStatus(
+            movimentacao.saasClienteId,
+            tx,
+          );
+        }
+      } else {
+        await selfMachineService.recomputeContratoMensalidadeStatus(
+          movimentacao.saasClienteId,
+          tx,
+        );
+      }
+    }
 
     return {
       id: movimentacao.id,
@@ -565,6 +747,13 @@ async function listMovimentacoes(filters) {
           select: {
             id: true,
             nome: true,
+          },
+        },
+        saasCliente: {
+          select: {
+            id: true,
+            nomeCliente: true,
+            nomeSistema: true,
           },
         },
         contaOrigem: {

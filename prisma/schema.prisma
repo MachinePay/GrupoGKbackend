@@ -59,10 +59,13 @@ model Movimentacao {
   subcategoria  GiraKidsSubcategoria?
   empresaId     Int                    @map("empresa_id")
   projetoId     Int?                   @map("projeto_id")
+  saasClienteId Int?                   @map("saas_cliente_id")
+  saasLancamentoTipo SaasLancamentoTipo? @map("saas_lancamento_tipo")
   contaOrigemId Int?                   @map("conta_origem_id")
   contaDestinoId Int?                  @map("conta_destino_id")
   empresa       Empresa                @relation(fields: [empresaId], references: [id])
   projeto       Projeto?               @relation(fields: [projetoId], references: [id])
+  saasCliente   SaasCliente?           @relation(fields: [saasClienteId], references: [id])
   contaOrigem   ContaBancaria?         @relation("ContaOrigem", fields: [contaOrigemId], references: [id])
   contaDestino  ContaBancaria?         @relation("ContaDestino", fields: [contaDestinoId], references: [id])
   createdAt     DateTime               @default(now())
@@ -70,6 +73,7 @@ model Movimentacao {
 
   @@index([empresaId, status, tipo])
   @@index([data])
+  @@index([saasClienteId, saasLancamentoTipo])
   @@map("movimentacoes")
 }
 
@@ -130,6 +134,37 @@ model Usuario {
   updatedAt         DateTime     @updatedAt
 
   @@map("usuarios")
+}
+
+model SaasCliente {
+  id                     Int                 @id @default(autoincrement())
+  nomeCliente            String              @map("nome_cliente")
+  nomeSistema            String              @map("nome_sistema")
+  logoParceiraUrl        String?             @map("logo_parceira_url")
+  logoSelfMachineUrl     String?             @map("logo_selfmachine_url")
+  vendedor               String
+  numeroPc               String              @map("numero_pc")
+  dataEmissao            DateTime            @map("data_emissao")
+  tipoRemessa            TipoRemessa
+  valorDesenvolvimento   Decimal?            @map("valor_desenvolvimento") @db.Decimal(14, 2)
+  valorMensalidade       Decimal             @map("valor_mensalidade") @db.Decimal(14, 2)
+  dataInicioMensalidade  DateTime            @map("data_inicio_mensalidade")
+  condicoesPagamento     String?             @map("condicoes_pagamento")
+  meioPagamento          String?             @map("meio_pagamento")
+  statusSistema          StatusSistemaSaas   @default(ATIVO) @map("status_sistema")
+  statusMensalidade      StatusMensalidade   @default(AGUARDANDO_PAGAMENTO) @map("status_mensalidade")
+  ultimaMensalidadePagaEm DateTime?          @map("ultima_mensalidade_paga_em")
+  tipoPlano              TipoPlanoSaas       @map("tipo_plano")
+  descricao              String?
+  ultimoPedidoPagamentoAt DateTime?          @map("ultimo_pedido_pagamento_at")
+  movimentacoes          Movimentacao[]
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  @@index([statusSistema])
+  @@index([statusMensalidade])
+  @@index([dataInicioMensalidade])
+  @@map("saas_clientes")
 }
 
 enum MovimentacaoTipo {
@@ -210,4 +245,34 @@ enum PerfilUsuario {
 enum TemaUsuario {
   LIGHT
   DARK
+}
+
+enum TipoRemessa {
+  UNICA
+  RECORRENTE
+}
+
+enum StatusSistemaSaas {
+  ATIVO
+  PAUSADO
+  ATRASADO
+  ENTREGUE
+}
+
+enum StatusMensalidade {
+  AGUARDANDO_PAGAMENTO
+  EM_ABERTO
+  PAGO
+  ATRASADO
+  PAUSADO
+}
+
+enum TipoPlanoSaas {
+  FULL
+  SMALL
+}
+
+enum SaasLancamentoTipo {
+  MENSALIDADE
+  PAGAMENTO
 }
