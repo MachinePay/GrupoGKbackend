@@ -151,6 +151,7 @@ model SaasCliente {
   dataInicioMensalidade  DateTime            @map("data_inicio_mensalidade")
   condicoesPagamento     String?             @map("condicoes_pagamento")
   meioPagamento          String?             @map("meio_pagamento")
+  chavePix               String?             @map("chave_pix")
   statusSistema          StatusSistemaSaas   @default(ATIVO) @map("status_sistema")
   statusMensalidade      StatusMensalidade   @default(AGUARDANDO_PAGAMENTO) @map("status_mensalidade")
   ultimaMensalidadePagaEm DateTime?          @map("ultima_mensalidade_paga_em")
