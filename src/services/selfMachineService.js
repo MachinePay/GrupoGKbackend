@@ -25,20 +25,22 @@ function normalizeContrato(contrato) {
     valorDesenvolvimento: decimalToNumber(contrato.valorDesenvolvimento),
     valorMensalidade: decimalToNumber(contrato.valorMensalidade),
     temPedidoLancado: Boolean(contrato.temPedidoLancado),
+    temPagamentoLancado: Boolean(contrato.temPagamentoLancado),
   };
 }
 
 /**
- * Marca contratos que possuem ao menos um lancamento PEDIDO vinculado.
+ * Marca contratos com flags de lancamentos vinculados.
  * @param {Array<object>} contratos
  * @returns {Promise<Array<object>>}
  */
-async function attachPedidoFlagToContratos(contratos) {
+async function attachLancamentoFlagsToContratos(contratos) {
   if (!contratos.length) {
     return contratos;
   }
 
   const contratoIds = contratos.map((item) => Number(item.id));
+
   const pedidos = await prisma.movimentacao.findMany({
     where: {
       saasClienteId: { in: contratoIds },
@@ -54,9 +56,26 @@ async function attachPedidoFlagToContratos(contratos) {
       .filter((value) => value !== null && value !== undefined),
   );
 
+  const pagamentos = await prisma.movimentacao.findMany({
+    where: {
+      saasClienteId: { in: contratoIds },
+      saasLancamentoTipo: "PAGAMENTO",
+      status: "REALIZADO",
+    },
+    select: { saasClienteId: true },
+    distinct: ["saasClienteId"],
+  });
+
+  const contratosComPagamento = new Set(
+    pagamentos
+      .map((item) => item.saasClienteId)
+      .filter((value) => value !== null && value !== undefined),
+  );
+
   return contratos.map((contrato) => ({
     ...contrato,
     temPedidoLancado: contratosComPedido.has(Number(contrato.id)),
+    temPagamentoLancado: contratosComPagamento.has(Number(contrato.id)),
   }));
 }
 
@@ -189,7 +208,7 @@ async function refreshMensalidadeStatuses() {
     }
   } catch (err) {
     console.error("Erro em refreshMensalidadeStatuses:", err);
-    // Silently fail, não interrompe listagem
+    // Silently fail, nao interrompe listagem
   }
 }
 
@@ -428,14 +447,14 @@ async function listSaasContratos() {
     await refreshMensalidadeStatuses();
   } catch (err) {
     console.error("Erro ao atualizar status de mensalidade:", err);
-    // Continua mesmo se houver erro na atualização
+    // Continua mesmo se houver erro na atualizacao
   }
 
   const data = await prisma.saasCliente.findMany({
     orderBy: [{ statusSistema: "asc" }, { nomeCliente: "asc" }],
   });
 
-  const dataWithPedidoFlag = await attachPedidoFlagToContratos(data);
+  const dataWithPedidoFlag = await attachLancamentoFlagsToContratos(data);
 
   return dataWithPedidoFlag.map(normalizeContrato);
 }
@@ -454,7 +473,7 @@ async function getSaasContratoById(id) {
     throw new AppError("Contrato SaaS nao encontrado.", 404);
   }
 
-  const [contratoWithPedidoFlag] = await attachPedidoFlagToContratos([
+  const [contratoWithPedidoFlag] = await attachLancamentoFlagsToContratos([
     contrato,
   ]);
 
