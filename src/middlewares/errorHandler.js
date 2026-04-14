@@ -49,6 +49,8 @@ function normalizePrismaError(error) {
  * @returns {void}
  */
 function errorHandler(error, _req, res, _next) {
+  console.error("[ERROR]", error.constructor.name, ":", error.message);
+
   const normalizedError =
     error instanceof AppError
       ? error
@@ -62,7 +64,7 @@ function errorHandler(error, _req, res, _next) {
     !(error instanceof Prisma.PrismaClientKnownRequestError) &&
     !(error instanceof Prisma.PrismaClientValidationError)
   ) {
-    console.error(error);
+    console.error("[STACK]", error.stack);
   }
 
   res.status(normalizedError.statusCode).json({

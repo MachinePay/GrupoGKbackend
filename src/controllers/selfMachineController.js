@@ -8,9 +8,16 @@ const selfMachineService = require("../services/selfMachineService");
  */
 async function listSaasContratos(_req, res, next) {
   try {
+    console.log("[selfMachine] Iniciando listSaasContratos...");
     const data = await selfMachineService.listSaasContratos();
+    console.log(`[selfMachine] Retornando ${data.length} contratos`);
     res.json(data);
   } catch (error) {
+    console.error(
+      "[selfMachine] Erro em listSaasContratos:",
+      error.message,
+      error.stack,
+    );
     next(error);
   }
 }
