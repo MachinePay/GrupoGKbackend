@@ -24,7 +24,40 @@ function normalizeContrato(contrato) {
     ...contrato,
     valorDesenvolvimento: decimalToNumber(contrato.valorDesenvolvimento),
     valorMensalidade: decimalToNumber(contrato.valorMensalidade),
+    temPedidoLancado: Boolean(contrato.temPedidoLancado),
   };
+}
+
+/**
+ * Marca contratos que possuem ao menos um lancamento PEDIDO vinculado.
+ * @param {Array<object>} contratos
+ * @returns {Promise<Array<object>>}
+ */
+async function attachPedidoFlagToContratos(contratos) {
+  if (!contratos.length) {
+    return contratos;
+  }
+
+  const contratoIds = contratos.map((item) => Number(item.id));
+  const pedidos = await prisma.movimentacao.findMany({
+    where: {
+      saasClienteId: { in: contratoIds },
+      categoria: "PEDIDO",
+    },
+    select: { saasClienteId: true },
+    distinct: ["saasClienteId"],
+  });
+
+  const contratosComPedido = new Set(
+    pedidos
+      .map((item) => item.saasClienteId)
+      .filter((value) => value !== null && value !== undefined),
+  );
+
+  return contratos.map((contrato) => ({
+    ...contrato,
+    temPedidoLancado: contratosComPedido.has(Number(contrato.id)),
+  }));
 }
 
 /**
@@ -402,7 +435,9 @@ async function listSaasContratos() {
     orderBy: [{ statusSistema: "asc" }, { nomeCliente: "asc" }],
   });
 
-  return data.map(normalizeContrato);
+  const dataWithPedidoFlag = await attachPedidoFlagToContratos(data);
+
+  return dataWithPedidoFlag.map(normalizeContrato);
 }
 
 /**
@@ -419,7 +454,11 @@ async function getSaasContratoById(id) {
     throw new AppError("Contrato SaaS nao encontrado.", 404);
   }
 
-  return normalizeContrato(contrato);
+  const [contratoWithPedidoFlag] = await attachPedidoFlagToContratos([
+    contrato,
+  ]);
+
+  return normalizeContrato(contratoWithPedidoFlag);
 }
 
 /**
