@@ -575,6 +575,224 @@ async function gerarPedidoPagamento(id) {
   return normalizeContrato(updated);
 }
 
+/**
+ * Gera relatorio completo da operação SelfMachine SaaS.
+ * @returns {Promise<object>}
+ */
+async function getSaasRelatorio() {
+  const contratos = await prisma.saasCliente.findMany({
+    select: {
+      id: true,
+      nomeCliente: true,
+      nomeSistema: true,
+      tipoPlano: true,
+      statusSistema: true,
+      statusMensalidade: true,
+      valorMensalidade: true,
+      valorDesenvolvimento: true,
+      dataInicioMensalidade: true,
+      createdAt: true,
+    },
+  });
+
+  const movimentacoes = await prisma.movimentacao.findMany({
+    where: { saasClienteId: { not: null } },
+    select: {
+      id: true,
+      tipo: true,
+      valor: true,
+      data: true,
+      categoria: true,
+      status: true,
+      saasClienteId: true,
+      saasCliente: { select: { nomeCliente: true, nomeSistema: true } },
+    },
+    orderBy: { data: "asc" },
+  });
+
+  const hoje = new Date();
+  const mesAnteriorDate = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+
+  // Resumo contratos
+  const ativos = contratos.filter((c) => c.statusSistema === "ATIVO");
+  const atrasados = contratos.filter(
+    (c) => c.statusSistema === "ATRASADO" || c.statusMensalidade === "ATRASADO",
+  );
+  const pausados = contratos.filter((c) => c.statusSistema === "PAUSADO");
+
+  const mrr = ativos.reduce(
+    (acc, c) => acc + Number(c.valorMensalidade || 0),
+    0,
+  );
+  const arr = mrr * 12;
+  const ticketMedio = ativos.length ? mrr / ativos.length : 0;
+  const totalSetupCobrado = contratos.reduce(
+    (acc, c) => acc + Number(c.valorDesenvolvimento || 0),
+    0,
+  );
+
+  // Financeiro
+  const entradas = movimentacoes.filter((m) => m.tipo === "ENTRADA");
+  const saidas = movimentacoes.filter((m) => m.tipo === "SAIDA");
+
+  const receitaRealizada = entradas.reduce(
+    (acc, m) => acc + Number(m.valor || 0),
+    0,
+  );
+  const despesasTotal = saidas.reduce(
+    (acc, m) => acc + Number(m.valor || 0),
+    0,
+  );
+  const lucro = receitaRealizada - despesasTotal;
+  const margemLucro =
+    receitaRealizada > 0 ? (lucro / receitaRealizada) * 100 : 0;
+
+  // Gastos por categoria
+  const gastosMap = {};
+  for (const m of saidas) {
+    const cat = m.categoria || "OUTROS";
+    gastosMap[cat] = (gastosMap[cat] || 0) + Number(m.valor || 0);
+  }
+  const gastosPorCategoria = Object.entries(gastosMap)
+    .map(([categoria, valor]) => ({
+      categoria,
+      valor,
+      percentual: despesasTotal > 0 ? (valor / despesasTotal) * 100 : 0,
+    }))
+    .sort((a, b) => b.valor - a.valor);
+
+  // Receita por cliente
+  const receitaClienteMap = {};
+  for (const m of entradas) {
+    const key = m.saasClienteId;
+    if (!receitaClienteMap[key]) {
+      receitaClienteMap[key] = {
+        nomeCliente: m.saasCliente?.nomeCliente || "Desconhecido",
+        nomeSistema: m.saasCliente?.nomeSistema || "-",
+        valor: 0,
+        count: 0,
+        mensalidade: 0,
+      };
+    }
+    receitaClienteMap[key].valor += Number(m.valor || 0);
+    receitaClienteMap[key].count += 1;
+  }
+
+  for (const rc of Object.values(receitaClienteMap)) {
+    const contrato = contratos.find((c) => c.nomeCliente === rc.nomeCliente);
+    if (contrato) {
+      rc.mensalidade = Number(contrato.valorMensalidade || 0);
+    }
+  }
+
+  const receitasPorCliente = Object.values(receitaClienteMap).sort(
+    (a, b) => b.valor - a.valor,
+  );
+
+  // Histórico mensal (últimos 12 meses)
+  const historicoMensal = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    const label = d
+      .toLocaleString("pt-BR", { month: "short", year: "2-digit" })
+      .replace(".", "");
+    const labelFormatado =
+      label.charAt(0).toUpperCase() + label.slice(1).replace(" de", "");
+
+    const monthEntradas = entradas.filter((m) => {
+      const md = new Date(m.data);
+      return (
+        md.getFullYear() === d.getFullYear() && md.getMonth() === d.getMonth()
+      );
+    });
+    const monthSaidas = saidas.filter((m) => {
+      const md = new Date(m.data);
+      return (
+        md.getFullYear() === d.getFullYear() && md.getMonth() === d.getMonth()
+      );
+    });
+
+    const entradasTotal = monthEntradas.reduce(
+      (acc, m) => acc + Number(m.valor || 0),
+      0,
+    );
+    const saidasTotal = monthSaidas.reduce(
+      (acc, m) => acc + Number(m.valor || 0),
+      0,
+    );
+
+    historicoMensal.push({
+      mes: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`,
+      label: labelFormatado,
+      entradas: entradasTotal,
+      saidas: saidasTotal,
+      saldo: entradasTotal - saidasTotal,
+    });
+  }
+
+  // Crescimento (contratos criados este mês vs anterior)
+  const contratosEsteMes = contratos.filter((c) => {
+    const cd = new Date(c.createdAt);
+    return (
+      cd.getFullYear() === hoje.getFullYear() &&
+      cd.getMonth() === hoje.getMonth()
+    );
+  }).length;
+
+  const contratosMesAnterior = contratos.filter((c) => {
+    const cd = new Date(c.createdAt);
+    return (
+      cd.getFullYear() === mesAnteriorDate.getFullYear() &&
+      cd.getMonth() === mesAnteriorDate.getMonth()
+    );
+  }).length;
+
+  const taxaCrescimento =
+    contratosMesAnterior > 0
+      ? ((contratosEsteMes - contratosMesAnterior) / contratosMesAnterior) * 100
+      : contratosEsteMes > 0
+        ? 100
+        : 0;
+
+  // Distribuição por plano
+  const distribuicaoPlanos = ["FULL", "SMALL"].map((plano) => ({
+    plano,
+    count: contratos.filter((c) => c.tipoPlano === plano).length,
+    mrr: contratos
+      .filter((c) => c.tipoPlano === plano && c.statusSistema === "ATIVO")
+      .reduce((acc, c) => acc + Number(c.valorMensalidade || 0), 0),
+    mrrPotencial: contratos
+      .filter((c) => c.tipoPlano === plano)
+      .reduce((acc, c) => acc + Number(c.valorMensalidade || 0), 0),
+  }));
+
+  // Receita MRR recente (entradas de pagamento dos últimos 30 dias)
+  const trintaDiasAtras = new Date(hoje.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const receita30Dias = entradas
+    .filter((m) => new Date(m.data) >= trintaDiasAtras)
+    .reduce((acc, m) => acc + Number(m.valor || 0), 0);
+
+  return {
+    resumo: {
+      mrr,
+      arr,
+      ticketMedio,
+      totalSetupCobrado,
+      totalContratos: contratos.length,
+      contratosAtivos: ativos.length,
+      contratosAtrasados: atrasados.length,
+      contratosPausados: pausados.length,
+      receita30Dias,
+    },
+    financeiro: { receitaRealizada, despesasTotal, lucro, margemLucro },
+    gastosPorCategoria,
+    receitasPorCliente,
+    historicoMensal,
+    crescimento: { contratosEsteMes, contratosMesAnterior, taxaCrescimento },
+    distribuicaoPlanos,
+  };
+}
+
 module.exports = {
   listSaasContratos,
   getSaasContratoById,
@@ -584,4 +802,5 @@ module.exports = {
   gerarPedidoPagamento,
   recomputeContratoMensalidadeStatus,
   registerMensalidadePagamento,
+  getSaasRelatorio,
 };

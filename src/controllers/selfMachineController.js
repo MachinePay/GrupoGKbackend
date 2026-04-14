@@ -100,6 +100,21 @@ async function gerarPedidoPagamento(req, res, next) {
   }
 }
 
+/**
+ * Retorna relatorio completo da operação SelfMachine SaaS.
+ * @param {import("express").Request} _req
+ * @param {import("express").Response} res
+ * @param {import("express").NextFunction} next
+ */
+async function getRelatorio(_req, res, next) {
+  try {
+    const data = await selfMachineService.getSaasRelatorio();
+    res.json(data);
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   listSaasContratos,
   getSaasContratoById,
@@ -107,4 +122,5 @@ module.exports = {
   updateSaasContrato,
   deleteSaasContrato,
   gerarPedidoPagamento,
+  getRelatorio,
 };

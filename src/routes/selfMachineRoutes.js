@@ -3,6 +3,7 @@ const selfMachineController = require("../controllers/selfMachineController");
 
 const router = Router();
 
+router.get("/saas/relatorio", selfMachineController.getRelatorio);
 router.get("/saas", selfMachineController.listSaasContratos);
 router.get("/saas/:id", selfMachineController.getSaasContratoById);
 router.post("/saas", selfMachineController.createSaasContrato);
