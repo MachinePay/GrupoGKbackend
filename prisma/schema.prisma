@@ -157,6 +157,7 @@ model SaasCliente {
   ultimaMensalidadePagaEm DateTime?          @map("ultima_mensalidade_paga_em")
   tipoPlano              TipoPlanoSaas       @map("tipo_plano")
   descricao              String?
+  prazosDescricao        String?             @map("prazos_descricao")
   ultimoPedidoPagamentoAt DateTime?          @map("ultimo_pedido_pagamento_at")
   movimentacoes          Movimentacao[]
   createdAt              DateTime            @default(now())
