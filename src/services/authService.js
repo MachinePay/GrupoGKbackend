@@ -10,12 +10,19 @@ const AppError = require("../middlewares/appError");
  * @returns {{ id: number, nome: string, email: string, perfil: string, tema: string, ativo: boolean, ultimoLoginAt: Date | null, createdAt: Date, updatedAt: Date }}
  */
 function sanitizeUser(usuario) {
+  const contaBancariaIds = usuario.contasAcesso?.length
+    ? usuario.contasAcesso.map((item) => item.contaBancariaId)
+    : usuario.contaBancariaId
+      ? [usuario.contaBancariaId]
+      : [];
+
   return {
     id: usuario.id,
     nome: usuario.nome,
     email: usuario.email,
     perfil: usuario.perfil,
     contaBancariaId: usuario.contaBancariaId,
+    contaBancariaIds,
     tema: usuario.tema,
     ativo: usuario.ativo,
     ultimoLoginAt: usuario.ultimoLoginAt,
@@ -36,6 +43,7 @@ function generateToken(user) {
       email: user.email,
       perfil: user.perfil,
       contaBancariaId: user.contaBancariaId,
+      contaBancariaIds: user.contaBancariaIds,
     },
     env.jwtSecret,
     { expiresIn: env.jwtExpiresIn },
@@ -117,7 +125,10 @@ async function login(payload) {
 
   await syncSeedAdminForLogin(email);
 
-  const usuario = await prisma.usuario.findUnique({ where: { email } });
+  const usuario = await prisma.usuario.findUnique({
+    where: { email },
+    include: { contasAcesso: { select: { contaBancariaId: true } } },
+  });
 
   if (!usuario) {
     throw new AppError("Credenciais invalidas.", 401);
@@ -136,6 +147,7 @@ async function login(payload) {
   const updatedUser = await prisma.usuario.update({
     where: { id: usuario.id },
     data: { ultimoLoginAt: new Date() },
+    include: { contasAcesso: { select: { contaBancariaId: true } } },
   });
 
   const token = generateToken(updatedUser);
@@ -154,6 +166,7 @@ async function login(payload) {
 async function getMe(userId) {
   const usuario = await prisma.usuario.findUnique({
     where: { id: Number(userId) },
+    include: { contasAcesso: { select: { contaBancariaId: true } } },
   });
 
   if (!usuario) {

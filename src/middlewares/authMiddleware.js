@@ -46,6 +46,13 @@ function authenticate(req, _res, next) {
       contaBancariaId: payload.contaBancariaId
         ? Number(payload.contaBancariaId)
         : null,
+      contaBancariaIds: Array.isArray(payload.contaBancariaIds)
+        ? payload.contaBancariaIds
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && value > 0)
+        : payload.contaBancariaId
+          ? [Number(payload.contaBancariaId)]
+          : [],
     };
 
     return next();

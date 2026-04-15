@@ -240,7 +240,7 @@ function validateAccountsByType(payload) {
 
 /**
  * Aplica restricoes de perfil CAIXA para operacoes de movimentacao.
- * @param {{ perfil?: string, contaBancariaId?: number | null } | undefined} user Usuario autenticado.
+ * @param {{ perfil?: string, contaBancariaId?: number | null, contaBancariaIds?: number[] } | undefined} user Usuario autenticado.
  * @param {object} payload Dados da movimentacao.
  */
 function validateCaixaCreatePermissions(user, payload) {
@@ -248,14 +248,19 @@ function validateCaixaCreatePermissions(user, payload) {
     return;
   }
 
-  if (!user.contaBancariaId) {
+  const contasPermitidas =
+    Array.isArray(user.contaBancariaIds) && user.contaBancariaIds.length
+      ? user.contaBancariaIds.map((value) => Number(value))
+      : user.contaBancariaId
+        ? [Number(user.contaBancariaId)]
+        : [];
+
+  if (!contasPermitidas.length) {
     throw new AppError(
       "Usuario CAIXA sem conta vinculada. Contate um administrador.",
       403,
     );
   }
-
-  const contaVinculada = Number(user.contaBancariaId);
   const tipoPermitido =
     payload.tipo === MOVIMENTACAO_TIPO.ENTRADA ||
     payload.tipo === MOVIMENTACAO_TIPO.SAIDA;
@@ -266,20 +271,20 @@ function validateCaixaCreatePermissions(user, payload) {
 
   if (
     payload.tipo === MOVIMENTACAO_TIPO.ENTRADA &&
-    Number(payload.contaDestinoId) !== contaVinculada
+    !contasPermitidas.includes(Number(payload.contaDestinoId))
   ) {
     throw new AppError(
-      "Perfil CAIXA pode lançar ENTRADA apenas na conta vinculada.",
+      "Perfil CAIXA pode lançar ENTRADA apenas em uma conta autorizada.",
       403,
     );
   }
 
   if (
     payload.tipo === MOVIMENTACAO_TIPO.SAIDA &&
-    Number(payload.contaOrigemId) !== contaVinculada
+    !contasPermitidas.includes(Number(payload.contaOrigemId))
   ) {
     throw new AppError(
-      "Perfil CAIXA pode lançar SAIDA apenas na conta vinculada.",
+      "Perfil CAIXA pode lançar SAIDA apenas em uma conta autorizada.",
       403,
     );
   }
@@ -287,7 +292,7 @@ function validateCaixaCreatePermissions(user, payload) {
 
 /**
  * Restringe filtros e escopo de listagem para perfil CAIXA.
- * @param {{ perfil?: string, contaBancariaId?: number | null } | undefined} user Usuario autenticado.
+ * @param {{ perfil?: string, contaBancariaId?: number | null, contaBancariaIds?: number[] } | undefined} user Usuario autenticado.
  * @param {object} filters Filtros da listagem.
  * @returns {object}
  */
@@ -296,7 +301,14 @@ function applyCaixaListScope(user, filters) {
     return { ...filters };
   }
 
-  if (!user.contaBancariaId) {
+  const contasPermitidas =
+    Array.isArray(user.contaBancariaIds) && user.contaBancariaIds.length
+      ? user.contaBancariaIds.map((value) => Number(value))
+      : user.contaBancariaId
+        ? [Number(user.contaBancariaId)]
+        : [];
+
+  if (!contasPermitidas.length) {
     throw new AppError(
       "Usuario CAIXA sem conta vinculada. Contate um administrador.",
       403,
@@ -304,19 +316,21 @@ function applyCaixaListScope(user, filters) {
   }
 
   const scopedFilters = { ...filters };
-  const contaVinculada = Number(user.contaBancariaId);
 
   if (
     scopedFilters.contaId &&
-    Number(scopedFilters.contaId) !== contaVinculada
+    !contasPermitidas.includes(Number(scopedFilters.contaId))
   ) {
     throw new AppError(
-      "Perfil CAIXA pode consultar apenas a conta vinculada.",
+      "Perfil CAIXA pode consultar apenas contas autorizadas.",
       403,
     );
   }
 
-  scopedFilters.contaId = contaVinculada;
+  if (!scopedFilters.contaId) {
+    scopedFilters.contaIds = contasPermitidas;
+  }
+
   return scopedFilters;
 }
 
@@ -911,14 +925,21 @@ async function listMovimentacoes(filters, options = {}) {
         }
       : {}),
     ...(Object.keys(dateFilter).length ? { data: dateFilter } : {}),
-    ...(scopedFilters.contaId
+    ...(scopedFilters.contaIds?.length
       ? {
-          OR: [
-            { contaOrigemId: Number(scopedFilters.contaId) },
-            { contaDestinoId: Number(scopedFilters.contaId) },
-          ],
+          OR: scopedFilters.contaIds.flatMap((contaId) => [
+            { contaOrigemId: Number(contaId) },
+            { contaDestinoId: Number(contaId) },
+          ]),
         }
-      : {}),
+      : scopedFilters.contaId
+        ? {
+            OR: [
+              { contaOrigemId: Number(scopedFilters.contaId) },
+              { contaDestinoId: Number(scopedFilters.contaId) },
+            ],
+          }
+        : {}),
     ...(String(scopedFilters.somenteAprovadosConciliacao).toLowerCase() ===
     "true"
       ? {

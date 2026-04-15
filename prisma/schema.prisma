@@ -25,7 +25,8 @@ model ContaBancaria {
   saldoAtual           Decimal         @default(0) @map("saldo_atual") @db.Decimal(14, 2)
   movimentacoesOrigem  Movimentacao[]  @relation("ContaOrigem")
   movimentacoesDestino Movimentacao[]  @relation("ContaDestino")
-  usuariosAcesso       Usuario[]
+  usuariosContaPrimaria Usuario[]      @relation("UsuarioContaPrimaria")
+  usuariosContaAcesso  UsuarioContaAcesso[]
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
@@ -132,7 +133,8 @@ model Usuario {
   tema                  TemaUsuario     @default(LIGHT)
   ativo                 Boolean         @default(true)
   contaBancariaId       Int?            @map("conta_bancaria_id")
-  contaBancaria         ContaBancaria?  @relation(fields: [contaBancariaId], references: [id])
+  contaBancaria         ContaBancaria?  @relation("UsuarioContaPrimaria", fields: [contaBancariaId], references: [id])
+  contasAcesso          UsuarioContaAcesso[]
   ultimoLoginAt         DateTime?       @map("ultimo_login_at")
   agendaAprovadas       Agenda[]        @relation("AgendaAprovador")
   agendaCriadas         Agenda[]        @relation("AgendaCriador")
@@ -140,6 +142,19 @@ model Usuario {
   updatedAt             DateTime        @updatedAt
 
   @@map("usuarios")
+}
+
+model UsuarioContaAcesso {
+  id             Int           @id @default(autoincrement())
+  usuarioId      Int           @map("usuario_id")
+  contaBancariaId Int          @map("conta_bancaria_id")
+  usuario        Usuario       @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  contaBancaria  ContaBancaria @relation(fields: [contaBancariaId], references: [id], onDelete: Cascade)
+  createdAt      DateTime      @default(now())
+
+  @@unique([usuarioId, contaBancariaId])
+  @@index([contaBancariaId])
+  @@map("usuarios_contas_acesso")
 }
 
 model SaasCliente {

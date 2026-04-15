@@ -30,7 +30,8 @@ async function listar(req, res, next) {
  */
 async function criar(req, res, next) {
   try {
-    const { nome, email, senha, perfil, contaBancariaId } = req.body;
+    const { nome, email, senha, perfil, contaBancariaId, contaBancariaIds } =
+      req.body;
 
     const usuario = await usuarioService.criarUsuario({
       nome,
@@ -38,6 +39,7 @@ async function criar(req, res, next) {
       senha,
       perfil,
       contaBancariaId,
+      contaBancariaIds,
     });
 
     res.status(201).json(usuario);
@@ -55,13 +57,16 @@ async function criar(req, res, next) {
 async function atualizar(req, res, next) {
   try {
     const { id } = req.params;
-    const { nome, perfil, ativo, contaBancariaId } = req.body;
+    const { nome, perfil, ativo, contaBancariaId, contaBancariaIds, senha } =
+      req.body;
 
     const usuario = await usuarioService.atualizarUsuario(id, {
       nome,
       perfil,
       ativo,
       contaBancariaId,
+      contaBancariaIds,
+      senha,
     });
 
     res.json(usuario);
