@@ -303,6 +303,21 @@ function validateContratoPayload(payload, partial = false) {
     }
   }
 
+  const meioPagamentoNormalizado = payload.meioPagamento
+    ? String(payload.meioPagamento).trim().toUpperCase()
+    : null;
+
+  if (
+    !partial &&
+    meioPagamentoNormalizado === "PIX" &&
+    String(payload.chavePix || "").trim() === ""
+  ) {
+    throw new AppError(
+      "Campo chavePix obrigatorio quando meioPagamento for PIX.",
+      400,
+    );
+  }
+
   if (
     payload.valorMensalidade !== undefined &&
     (Number.isNaN(Number(payload.valorMensalidade)) ||
@@ -518,11 +533,31 @@ async function updateSaasContrato(id, payload) {
 
   const exists = await prisma.saasCliente.findUnique({
     where: { id: Number(id) },
-    select: { id: true },
+    select: { id: true, meioPagamento: true, chavePix: true },
   });
 
   if (!exists) {
     throw new AppError("Contrato SaaS nao encontrado.", 404);
+  }
+
+  const meioPagamentoFinal =
+    payload.meioPagamento !== undefined
+      ? String(payload.meioPagamento || "")
+          .trim()
+          .toUpperCase()
+      : String(exists.meioPagamento || "")
+          .trim()
+          .toUpperCase();
+  const chavePixFinal =
+    payload.chavePix !== undefined
+      ? String(payload.chavePix || "").trim()
+      : String(exists.chavePix || "").trim();
+
+  if (meioPagamentoFinal === "PIX" && chavePixFinal === "") {
+    throw new AppError(
+      "Campo chavePix obrigatorio quando meioPagamento for PIX.",
+      400,
+    );
   }
 
   const contrato = await prisma.saasCliente.update({
