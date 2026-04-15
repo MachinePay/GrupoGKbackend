@@ -43,6 +43,9 @@ function authenticate(req, _res, next) {
       id: Number(payload.sub),
       email: payload.email,
       perfil: payload.perfil,
+      contaBancariaId: payload.contaBancariaId
+        ? Number(payload.contaBancariaId)
+        : null,
     };
 
     return next();

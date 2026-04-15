@@ -9,7 +9,10 @@ const movimentacaoService = require("../services/movimentacaoService");
  */
 async function createMovimentacao(req, res, next) {
   try {
-    const movimentacao = await movimentacaoService.createMovimentacao(req.body);
+    const movimentacao = await movimentacaoService.createMovimentacao(
+      req.body,
+      { user: req.user },
+    );
     res.status(201).json(movimentacao);
   } catch (error) {
     next(error);
@@ -25,7 +28,9 @@ async function createMovimentacao(req, res, next) {
  */
 async function listMovimentacoes(req, res, next) {
   try {
-    const response = await movimentacaoService.listMovimentacoes(req.query);
+    const response = await movimentacaoService.listMovimentacoes(req.query, {
+      user: req.user,
+    });
     res.json(response);
   } catch (error) {
     next(error);

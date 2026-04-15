@@ -239,6 +239,88 @@ function validateAccountsByType(payload) {
 }
 
 /**
+ * Aplica restricoes de perfil CAIXA para operacoes de movimentacao.
+ * @param {{ perfil?: string, contaBancariaId?: number | null } | undefined} user Usuario autenticado.
+ * @param {object} payload Dados da movimentacao.
+ */
+function validateCaixaCreatePermissions(user, payload) {
+  if (!user || user.perfil !== "CAIXA") {
+    return;
+  }
+
+  if (!user.contaBancariaId) {
+    throw new AppError(
+      "Usuario CAIXA sem conta vinculada. Contate um administrador.",
+      403,
+    );
+  }
+
+  const contaVinculada = Number(user.contaBancariaId);
+  const tipoPermitido =
+    payload.tipo === MOVIMENTACAO_TIPO.ENTRADA ||
+    payload.tipo === MOVIMENTACAO_TIPO.SAIDA;
+
+  if (!tipoPermitido) {
+    throw new AppError("Perfil CAIXA pode lancar apenas ENTRADA e SAIDA.", 403);
+  }
+
+  if (
+    payload.tipo === MOVIMENTACAO_TIPO.ENTRADA &&
+    Number(payload.contaDestinoId) !== contaVinculada
+  ) {
+    throw new AppError(
+      "Perfil CAIXA pode lançar ENTRADA apenas na conta vinculada.",
+      403,
+    );
+  }
+
+  if (
+    payload.tipo === MOVIMENTACAO_TIPO.SAIDA &&
+    Number(payload.contaOrigemId) !== contaVinculada
+  ) {
+    throw new AppError(
+      "Perfil CAIXA pode lançar SAIDA apenas na conta vinculada.",
+      403,
+    );
+  }
+}
+
+/**
+ * Restringe filtros e escopo de listagem para perfil CAIXA.
+ * @param {{ perfil?: string, contaBancariaId?: number | null } | undefined} user Usuario autenticado.
+ * @param {object} filters Filtros da listagem.
+ * @returns {object}
+ */
+function applyCaixaListScope(user, filters) {
+  if (!user || user.perfil !== "CAIXA") {
+    return { ...filters };
+  }
+
+  if (!user.contaBancariaId) {
+    throw new AppError(
+      "Usuario CAIXA sem conta vinculada. Contate um administrador.",
+      403,
+    );
+  }
+
+  const scopedFilters = { ...filters };
+  const contaVinculada = Number(user.contaBancariaId);
+
+  if (
+    scopedFilters.contaId &&
+    Number(scopedFilters.contaId) !== contaVinculada
+  ) {
+    throw new AppError(
+      "Perfil CAIXA pode consultar apenas a conta vinculada.",
+      403,
+    );
+  }
+
+  scopedFilters.contaId = contaVinculada;
+  return scopedFilters;
+}
+
+/**
  * Normaliza payload de ajuste de saldo para valor assinado no banco.
  * @param {object} payload
  * @returns {object}
@@ -543,6 +625,7 @@ async function updateAccountBalances(tx, payload) {
 async function createMovimentacao(payload, options = {}) {
   const client = options.tx || prisma;
   const normalizedPayload = normalizePayload(payload);
+  validateCaixaCreatePermissions(options.user, normalizedPayload);
   validateAccountsByType(normalizedPayload);
 
   const empresa = await getEmpresaOrFail(normalizedPayload.empresaId, client);
@@ -777,61 +860,67 @@ async function deleteMovimentacao(movimentacaoId) {
  * @param {{ empresaId?: string | number, contaId?: string | number, categoria?: string, tipoDespesa?: string, referencia?: string, tipo?: string, status?: string, canalOrigem?: string, centroOperacao?: string, dataInicio?: string, dataFim?: string, page?: string | number, limit?: string | number }} filters Filtros opcionais.
  * @returns {Promise<{ items: object[], pagination: { page: number, limit: number, total: number, totalPages: number, hasNextPage: boolean, hasPrevPage: boolean } }>}
  */
-async function listMovimentacoes(filters) {
-  const page = Math.max(1, Number(filters.page) || 1);
-  const limit = Math.min(100, Math.max(1, Number(filters.limit) || 20));
+async function listMovimentacoes(filters, options = {}) {
+  const scopedFilters = applyCaixaListScope(options.user, filters);
+  const page = Math.max(1, Number(scopedFilters.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(scopedFilters.limit) || 20));
 
   const dateFilter = {};
-  if (filters.dataInicio) {
-    dateFilter.gte = new Date(filters.dataInicio);
+  if (scopedFilters.dataInicio) {
+    dateFilter.gte = new Date(scopedFilters.dataInicio);
   }
 
-  if (filters.dataFim) {
-    const endDate = new Date(filters.dataFim);
+  if (scopedFilters.dataFim) {
+    const endDate = new Date(scopedFilters.dataFim);
     endDate.setHours(23, 59, 59, 999);
     dateFilter.lte = endDate;
   }
 
   const where = {
-    ...(filters.empresaId ? { empresaId: Number(filters.empresaId) } : {}),
-    ...(filters.categoria ? { categoria: filters.categoria } : {}),
-    ...(filters.tipoDespesa ? { tipoDespesa: filters.tipoDespesa } : {}),
-    ...(filters.tipo ? { tipo: filters.tipo } : {}),
-    ...(filters.status ? { status: filters.status } : {}),
-    ...(filters.canalOrigem
+    ...(scopedFilters.empresaId
+      ? { empresaId: Number(scopedFilters.empresaId) }
+      : {}),
+    ...(scopedFilters.categoria ? { categoria: scopedFilters.categoria } : {}),
+    ...(scopedFilters.tipoDespesa
+      ? { tipoDespesa: scopedFilters.tipoDespesa }
+      : {}),
+    ...(scopedFilters.tipo ? { tipo: scopedFilters.tipo } : {}),
+    ...(scopedFilters.status ? { status: scopedFilters.status } : {}),
+    ...(scopedFilters.canalOrigem
       ? {
           canalOrigem: {
-            contains: filters.canalOrigem,
+            contains: scopedFilters.canalOrigem,
             mode: "insensitive",
           },
         }
       : {}),
-    ...(filters.centroOperacao
+    ...(scopedFilters.centroOperacao
       ? {
           centroOperacao: {
-            contains: filters.centroOperacao,
+            contains: scopedFilters.centroOperacao,
             mode: "insensitive",
           },
         }
       : {}),
-    ...(filters.referencia
+    ...(scopedFilters.referencia
       ? {
           referencia: {
-            contains: filters.referencia,
+            contains: scopedFilters.referencia,
             mode: "insensitive",
           },
         }
       : {}),
     ...(Object.keys(dateFilter).length ? { data: dateFilter } : {}),
-    ...(filters.contaId
+    ...(scopedFilters.contaId
       ? {
           OR: [
-            { contaOrigemId: Number(filters.contaId) },
-            { contaDestinoId: Number(filters.contaId) },
+            { contaOrigemId: Number(scopedFilters.contaId) },
+            { contaDestinoId: Number(scopedFilters.contaId) },
           ],
         }
       : {}),
-    ...(String(filters.somenteAprovadosConciliacao).toLowerCase() === "true"
+    ...(String(scopedFilters.somenteAprovadosConciliacao).toLowerCase() ===
+    "true"
       ? {
           AND: [
             {

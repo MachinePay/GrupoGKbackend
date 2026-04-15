@@ -25,6 +25,7 @@ model ContaBancaria {
   saldoAtual           Decimal         @default(0) @map("saldo_atual") @db.Decimal(14, 2)
   movimentacoesOrigem  Movimentacao[]  @relation("ContaOrigem")
   movimentacoesDestino Movimentacao[]  @relation("ContaDestino")
+  usuariosAcesso       Usuario[]
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
@@ -107,10 +108,12 @@ model Agenda {
   origemExterna         Boolean          @default(false) @map("origem_externa")
   referenciaExternaId   String?          @map("referencia_externa_id")
   usuarioAprovadorId    Int?             @map("usuario_aprovador_id")
+  usuarioCriacaoId      Int?             @map("usuario_criacao_id")
   dataAprovacao         DateTime?        @map("data_aprovacao")
   empresaId             Int              @map("empresa_id")
   empresa               Empresa          @relation(fields: [empresaId], references: [id])
-  usuarioAprovador      Usuario?         @relation(fields: [usuarioAprovadorId], references: [id])
+  usuarioAprovador      Usuario?         @relation("AgendaAprovador", fields: [usuarioAprovadorId], references: [id])
+  usuarioCriacao        Usuario?         @relation("AgendaCriador", fields: [usuarioCriacaoId], references: [id])
   createdAt             DateTime         @default(now())
   updatedAt             DateTime         @updatedAt
 
@@ -121,17 +124,20 @@ model Agenda {
 }
 
 model Usuario {
-  id                Int          @id @default(autoincrement())
-  nome              String
-  email             String       @unique
-  senhaHash         String       @map("senha_hash")
-  perfil            PerfilUsuario @default(FINANCEIRO)
-  tema              TemaUsuario  @default(LIGHT)
-  ativo             Boolean      @default(true)
-  ultimoLoginAt     DateTime?    @map("ultimo_login_at")
-  agendaAprovadas   Agenda[]
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
+  id                    Int             @id @default(autoincrement())
+  nome                  String
+  email                 String          @unique
+  senhaHash             String          @map("senha_hash")
+  perfil                PerfilUsuario   @default(FINANCEIRO)
+  tema                  TemaUsuario     @default(LIGHT)
+  ativo                 Boolean         @default(true)
+  contaBancariaId       Int?            @map("conta_bancaria_id")
+  contaBancaria         ContaBancaria?  @relation(fields: [contaBancariaId], references: [id])
+  ultimoLoginAt         DateTime?       @map("ultimo_login_at")
+  agendaAprovadas       Agenda[]        @relation("AgendaAprovador")
+  agendaCriadas         Agenda[]        @relation("AgendaCriador")
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
 
   @@map("usuarios")
 }
@@ -244,6 +250,7 @@ enum AgendaTipoPagamento {
 enum PerfilUsuario {
   ADMIN
   FINANCEIRO
+  CAIXA
 }
 
 enum TemaUsuario {

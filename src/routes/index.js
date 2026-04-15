@@ -8,6 +8,7 @@ const integracaoRoutes = require("./integracaoRoutes");
 const relatoriosRoutes = require("./relatoriosRoutes");
 const fornecedoresRoutes = require("./fornecedoresRoutes");
 const selfMachineRoutes = require("./selfMachineRoutes");
+const usuarioRoutes = require("./usuarioRoutes");
 const { authenticate } = require("../middlewares/authMiddleware");
 
 const router = Router();
@@ -19,6 +20,7 @@ router.get("/health", (_req, res) => {
 router.use("/auth", authRoutes);
 router.use(authenticate);
 
+router.use("/usuarios", usuarioRoutes);
 router.use("/movimentacoes", movimentacaoRoutes);
 router.use("/dashboards", dashboardRoutes);
 router.use("/relatorios", relatoriosRoutes);

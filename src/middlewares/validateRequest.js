@@ -333,7 +333,7 @@ function validateMovimentacaoIdParam(req, _res, next) {
  * @returns {void}
  */
 function validateAgendaQuery(req, _res, next) {
-  const { dataInicio, dataFim, page, limit } = req.query;
+  const { dataInicio, dataFim, page, limit, usuarioCriacaoId } = req.query;
 
   if (dataInicio && !isValidDate(dataInicio)) {
     return next(new AppError("Parametro dataInicio invalido.", 400));
@@ -359,6 +359,15 @@ function validateAgendaQuery(req, _res, next) {
       !Number.isInteger(Number(limit)))
   ) {
     return next(new AppError("Parametro limit invalido.", 400));
+  }
+
+  if (
+    usuarioCriacaoId !== undefined &&
+    (Number.isNaN(Number(usuarioCriacaoId)) ||
+      Number(usuarioCriacaoId) < 1 ||
+      !Number.isInteger(Number(usuarioCriacaoId)))
+  ) {
+    return next(new AppError("Parametro usuarioCriacaoId invalido.", 400));
   }
 
   return next();

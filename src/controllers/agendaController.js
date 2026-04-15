@@ -41,7 +41,8 @@ async function getAgendaSettlementHistory(req, res, next) {
  */
 async function createAgendaItem(req, res, next) {
   try {
-    const data = await agendaService.createAgendaItem(req.body);
+    const usuarioId = req.user?.id;
+    const data = await agendaService.createAgendaItem(req.body, usuarioId);
     res.status(201).json(data);
   } catch (error) {
     next(error);

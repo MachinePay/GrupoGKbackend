@@ -38,7 +38,7 @@ function buildAgendaDateFilter(dataInicio, dataFim) {
 
 /**
  * Lista os itens da agenda com filtros opcionais por periodo.
- * @param {{ dataInicio?: string, dataFim?: string, status?: string, tipo?: string, empresaId?: number | string }} filters Filtros da consulta.
+ * @param {{ dataInicio?: string, dataFim?: string, status?: string, tipo?: string, empresaId?: number | string, usuarioCriacaoId?: number | string }} filters Filtros da consulta.
  * @returns {Promise<object[]>}
  */
 async function getAgendaItems(filters) {
@@ -47,6 +47,9 @@ async function getAgendaItems(filters) {
     ...(filters.status ? { status: filters.status } : {}),
     ...(filters.tipo ? { tipo: filters.tipo } : {}),
     ...(filters.empresaId ? { empresaId: Number(filters.empresaId) } : {}),
+    ...(filters.usuarioCriacaoId
+      ? { usuarioCriacaoId: Number(filters.usuarioCriacaoId) }
+      : {}),
     OR: [
       { origemExterna: false },
       {
@@ -74,6 +77,13 @@ async function getAgendaItems(filters) {
           nome: true,
         },
       },
+      usuarioCriacao: {
+        select: {
+          id: true,
+          nome: true,
+          email: true,
+        },
+      },
     },
     orderBy: [{ data: "asc" }, { prioridade: "asc" }],
   });
@@ -81,7 +91,7 @@ async function getAgendaItems(filters) {
 
 /**
  * Lista historico de itens baixados da agenda.
- * @param {{ dataInicio?: string, dataFim?: string, empresaId?: number | string, limit?: number | string, page?: number | string }} filters Filtros da consulta.
+ * @param {{ dataInicio?: string, dataFim?: string, empresaId?: number | string, usuarioCriacaoId?: number | string, limit?: number | string, page?: number | string }} filters Filtros da consulta.
  * @returns {Promise<{ items: object[], pagination: { page: number, limit: number, total: number, totalPages: number, hasNextPage: boolean, hasPrevPage: boolean } }>}
  */
 async function getAgendaSettlementHistory(filters) {
@@ -92,6 +102,9 @@ async function getAgendaSettlementHistory(filters) {
     ...buildAgendaDateFilter(filters.dataInicio, filters.dataFim),
     status: "REALIZADO",
     ...(filters.empresaId ? { empresaId: Number(filters.empresaId) } : {}),
+    ...(filters.usuarioCriacaoId
+      ? { usuarioCriacaoId: Number(filters.usuarioCriacaoId) }
+      : {}),
     OR: [
       { origemExterna: false },
       {
@@ -115,6 +128,13 @@ async function getAgendaSettlementHistory(filters) {
           select: {
             id: true,
             nome: true,
+          },
+        },
+        usuarioCriacao: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
           },
         },
       },
@@ -159,7 +179,7 @@ async function getFornecedores() {
  * @param {{ data: string, titulo: string, descricao?: string, valor: number | string, prioridade: string, status: string, tipo: string, empresaId: number, origem?: string, origemTipo?: string, tipoPagamento?: string, fornecedorId?: number, recurrenteAte?: string }} payload Dados do item.
  * @returns {Promise<object | object[]>}
  */
-async function createAgendaItem(payload) {
+async function createAgendaItem(payload, usuarioId) {
   const empresa = await prisma.empresa.findUnique({
     where: { id: Number(payload.empresaId) },
   });
@@ -175,6 +195,34 @@ async function createAgendaItem(payload) {
     });
     if (!fornecedor) {
       throw new AppError("Fornecedor nao encontrado.", 404);
+    }
+  }
+
+  // Validar duplicata: mesmo titulo, data, valor, empresa e fornecedor criados pelo mesmo usuário nas últimas 24h
+  if (usuarioId) {
+    const dataInicio = new Date();
+    dataInicio.setHours(dataInicio.getHours() - 24);
+
+    const duplicata = await prisma.agenda.findFirst({
+      where: {
+        titulo: payload.titulo.trim(),
+        valor: toDecimal(payload.valor),
+        empresaId: Number(payload.empresaId),
+        fornecedorId: payload.fornecedorId
+          ? Number(payload.fornecedorId)
+          : null,
+        usuarioCriacaoId: Number(usuarioId),
+        createdAt: {
+          gte: dataInicio,
+        },
+      },
+    });
+
+    if (duplicata) {
+      throw new AppError(
+        "Compromisso duplicado detectado. Este compromisso foi criado há menos de 24h.",
+        409,
+      );
     }
   }
 
@@ -199,10 +247,12 @@ async function createAgendaItem(payload) {
         : null,
       fornecedorId: payload.fornecedorId ? Number(payload.fornecedorId) : null,
       empresaId: Number(payload.empresaId),
+      usuarioCriacaoId: usuarioId ? Number(usuarioId) : null,
     },
     include: {
       empresa: { select: { id: true, nome: true } },
       fornecedor: { select: { id: true, nome: true } },
+      usuarioCriacao: { select: { id: true, nome: true, email: true } },
     },
   });
 
@@ -232,10 +282,12 @@ async function createAgendaItem(payload) {
             ? Number(payload.fornecedorId)
             : null,
           empresaId: Number(payload.empresaId),
+          usuarioCriacaoId: usuarioId ? Number(usuarioId) : null,
         },
         include: {
           empresa: { select: { id: true, nome: true } },
           fornecedor: { select: { id: true, nome: true } },
+          usuarioCriacao: { select: { id: true, nome: true, email: true } },
         },
       });
       items.push(recurrentItem);
@@ -305,6 +357,7 @@ async function updateAgendaItem(agendaId, payload) {
     include: {
       empresa: { select: { id: true, nome: true } },
       fornecedor: { select: { id: true, nome: true } },
+      usuarioCriacao: { select: { id: true, nome: true, email: true } },
     },
   });
 }
@@ -396,6 +449,13 @@ async function settleAgendaItem(agendaId, payload) {
           select: {
             id: true,
             nome: true,
+          },
+        },
+        usuarioCriacao: {
+          select: {
+            id: true,
+            nome: true,
+            email: true,
           },
         },
       },
