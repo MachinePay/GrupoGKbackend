@@ -418,6 +418,9 @@ function mapPayloadToData(payload) {
     ...(payload.meioPagamento !== undefined && {
       meioPagamento: payload.meioPagamento?.trim() || null,
     }),
+    ...(payload.chavePix !== undefined && {
+      chavePix: payload.chavePix?.trim() || null,
+    }),
     ...(payload.statusSistema !== undefined && {
       statusSistema: payload.statusSistema,
     }),
@@ -434,6 +437,9 @@ function mapPayloadToData(payload) {
     }),
     ...(payload.descricao !== undefined && {
       descricao: payload.descricao?.trim() || null,
+    }),
+    ...(payload.prazosDescricao !== undefined && {
+      prazosDescricao: payload.prazosDescricao?.trim() || null,
     }),
   };
 }
