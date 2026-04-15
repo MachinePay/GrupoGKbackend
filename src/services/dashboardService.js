@@ -1,6 +1,29 @@
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 
+function getContaAccessFilter(user) {
+  if (!user || user.perfil !== "CAIXA") {
+    return {};
+  }
+
+  const contaIds = Array.isArray(user.contaBancariaIds)
+    ? user.contaBancariaIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    : user.contaBancariaId
+      ? [Number(user.contaBancariaId)]
+      : [];
+
+  if (!contaIds.length) {
+    throw new AppError(
+      "Usuario CAIXA sem contas autorizadas. Contate um administrador.",
+      403,
+    );
+  }
+
+  return { id: { in: contaIds } };
+}
+
 /**
  * Extrai um valor decimal agregado retornando zero quando nulo.
  * @param {import("@prisma/client").Prisma.Decimal | null | undefined} value Valor agregado.
@@ -14,17 +37,27 @@ function decimalToNumber(value) {
  * Busca o consolidado financeiro do grupo desconsiderando transferencias no resultado.
  * @returns {Promise<object>}
  */
-async function getConsolidatedDashboard() {
+async function getConsolidatedDashboard(user) {
+  const contaWhere = getContaAccessFilter(user);
   const [entradas, saidas, contas] = await Promise.all([
     prisma.movimentacao.aggregate({
       _sum: { valor: true },
-      where: { tipo: "ENTRADA", status: "REALIZADO" },
+      where: {
+        tipo: "ENTRADA",
+        status: "REALIZADO",
+        ...(contaWhere.id ? { contaDestinoId: contaWhere.id } : {}),
+      },
     }),
     prisma.movimentacao.aggregate({
       _sum: { valor: true },
-      where: { tipo: "SAIDA", status: "REALIZADO" },
+      where: {
+        tipo: "SAIDA",
+        status: "REALIZADO",
+        ...(contaWhere.id ? { contaOrigemId: contaWhere.id } : {}),
+      },
     }),
     prisma.contaBancaria.findMany({
+      where: contaWhere,
       select: { saldoAtual: true },
     }),
   ]);
@@ -49,7 +82,8 @@ async function getConsolidatedDashboard() {
  * @param {number} empresaId Identificador da empresa.
  * @returns {Promise<object>}
  */
-async function getEmpresaDashboard(empresaId) {
+async function getEmpresaDashboard(empresaId, user) {
+  const contaWhere = getContaAccessFilter(user);
   const [empresa, contasGlobais] = await Promise.all([
     prisma.empresa.findUnique({
       where: { id: Number(empresaId) },
@@ -67,6 +101,7 @@ async function getEmpresaDashboard(empresaId) {
       },
     }),
     prisma.contaBancaria.findMany({
+      where: contaWhere,
       orderBy: [{ banco: "asc" }, { nome: "asc" }],
     }),
   ]);
@@ -115,8 +150,10 @@ async function getEmpresaDashboard(empresaId) {
  * Lista os saldos das contas bancarias do grupo.
  * @returns {Promise<object[]>}
  */
-async function getContasDashboard() {
+async function getContasDashboard(user) {
+  const contaWhere = getContaAccessFilter(user);
   const contas = await prisma.contaBancaria.findMany({
+    where: contaWhere,
     orderBy: [{ banco: "asc" }, { nome: "asc" }],
   });
 
@@ -132,8 +169,10 @@ async function getContasDashboard() {
  * Consolida saldos por banco para o dashboard.
  * @returns {Promise<object[]>}
  */
-async function getBancosDashboard() {
+async function getBancosDashboard(user) {
+  const contaWhere = getContaAccessFilter(user);
   const contas = await prisma.contaBancaria.findMany({
+    where: contaWhere,
     orderBy: [{ banco: "asc" }, { nome: "asc" }],
   });
 

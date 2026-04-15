@@ -7,9 +7,9 @@ const dashboardService = require("../services/dashboardService");
  * @param {import("express").NextFunction} next Proximo middleware.
  * @returns {Promise<void>}
  */
-async function getConsolidatedDashboard(_req, res, next) {
+async function getConsolidatedDashboard(req, res, next) {
   try {
-    const data = await dashboardService.getConsolidatedDashboard();
+    const data = await dashboardService.getConsolidatedDashboard(req.user);
     res.json(data);
   } catch (error) {
     next(error);
@@ -25,7 +25,10 @@ async function getConsolidatedDashboard(_req, res, next) {
  */
 async function getEmpresaDashboard(req, res, next) {
   try {
-    const data = await dashboardService.getEmpresaDashboard(req.params.id);
+    const data = await dashboardService.getEmpresaDashboard(
+      req.params.id,
+      req.user,
+    );
     res.json(data);
   } catch (error) {
     next(error);
@@ -39,9 +42,9 @@ async function getEmpresaDashboard(req, res, next) {
  * @param {import("express").NextFunction} next Proximo middleware.
  * @returns {Promise<void>}
  */
-async function getContasDashboard(_req, res, next) {
+async function getContasDashboard(req, res, next) {
   try {
-    const data = await dashboardService.getContasDashboard();
+    const data = await dashboardService.getContasDashboard(req.user);
     res.json(data);
   } catch (error) {
     next(error);
@@ -55,9 +58,9 @@ async function getContasDashboard(_req, res, next) {
  * @param {import("express").NextFunction} next Proximo middleware.
  * @returns {Promise<void>}
  */
-async function getBancosDashboard(_req, res, next) {
+async function getBancosDashboard(req, res, next) {
   try {
-    const data = await dashboardService.getBancosDashboard();
+    const data = await dashboardService.getBancosDashboard(req.user);
     res.json(data);
   } catch (error) {
     next(error);
