@@ -173,6 +173,7 @@ enum MovimentacaoTipo {
   ENTRADA
   SAIDA
   TRANSFERENCIA
+  AJUSTE_SALDO
 }
 
 enum MovimentacaoCategoria {

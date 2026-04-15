@@ -4,11 +4,19 @@ const {
   GiraKidsSubcategoria,
   MovimentacaoCategoria,
   MovimentacaoStatus,
-  MovimentacaoTipo,
   PerfilUsuario,
   TemaUsuario,
 } = require("@prisma/client");
 const AppError = require("./appError");
+
+const MOVIMENTACAO_TIPOS = [
+  "ENTRADA",
+  "SAIDA",
+  "TRANSFERENCIA",
+  "AJUSTE_SALDO",
+];
+
+const AJUSTE_SALDO_OPERACOES = ["SOMAR", "SUBTRAIR"];
 
 const TIPOS_DESPESA = [
   "DESPESAS_ADMINISTRATIVAS",
@@ -63,6 +71,7 @@ function validateCreateMovimentacao(req, _res, next) {
     subcategoria,
     canalOrigem,
     centroOperacao,
+    ajusteSaldoOperacao,
   } = req.body;
 
   if (!data || Number.isNaN(new Date(data).getTime())) {
@@ -82,7 +91,7 @@ function validateCreateMovimentacao(req, _res, next) {
     );
   }
 
-  if (!Object.values(MovimentacaoTipo).includes(tipo)) {
+  if (!MOVIMENTACAO_TIPOS.includes(tipo)) {
     return next(new AppError("Campo tipo invalido.", 400));
   }
 
@@ -92,6 +101,32 @@ function validateCreateMovimentacao(req, _res, next) {
 
   if (categoria && !Object.values(MovimentacaoCategoria).includes(categoria)) {
     return next(new AppError("Campo categoria invalido.", 400));
+  }
+
+  if (tipo === "AJUSTE_SALDO") {
+    if (status !== "REALIZADO") {
+      return next(
+        new AppError("Ajuste de saldo deve ter status REALIZADO.", 400),
+      );
+    }
+
+    if (!AJUSTE_SALDO_OPERACOES.includes(ajusteSaldoOperacao)) {
+      return next(
+        new AppError(
+          "Campo ajusteSaldoOperacao obrigatorio para AJUSTE_SALDO.",
+          400,
+        ),
+      );
+    }
+  }
+
+  if (tipo !== "AJUSTE_SALDO" && ajusteSaldoOperacao !== undefined) {
+    return next(
+      new AppError(
+        "Campo ajusteSaldoOperacao so pode ser usado no tipo AJUSTE_SALDO.",
+        400,
+      ),
+    );
   }
 
   if (tipoDespesa && !TIPOS_DESPESA.includes(tipoDespesa)) {
@@ -220,7 +255,7 @@ function validateMovimentacoesQuery(req, _res, next) {
     return next(new AppError("Parametro tipoDespesa invalido.", 400));
   }
 
-  if (tipo && !Object.values(MovimentacaoTipo).includes(tipo)) {
+  if (tipo && !MOVIMENTACAO_TIPOS.includes(tipo)) {
     return next(new AppError("Parametro tipo invalido.", 400));
   }
 

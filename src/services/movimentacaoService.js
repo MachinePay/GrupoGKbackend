@@ -3,11 +3,22 @@ const {
   AgendaTipo,
   Prisma,
   MovimentacaoStatus,
-  MovimentacaoTipo,
 } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 const selfMachineService = require("./selfMachineService");
+
+const MOVIMENTACAO_TIPO = {
+  ENTRADA: "ENTRADA",
+  SAIDA: "SAIDA",
+  TRANSFERENCIA: "TRANSFERENCIA",
+  AJUSTE_SALDO: "AJUSTE_SALDO",
+};
+
+const AJUSTE_SALDO_OPERACAO = {
+  SOMAR: "SOMAR",
+  SUBTRAIR: "SUBTRAIR",
+};
 
 const TIPOS_DESPESA_CUSTO_FIXO = [
   "DESPESAS_ADMINISTRATIVAS",
@@ -87,15 +98,15 @@ function monthRange(date) {
 async function createAgendaFromPrevisto(tx, payload, options = {}) {
   const isPrevisto = payload.status === MovimentacaoStatus.PREVISTO;
   const isSupportedType =
-    payload.tipo === MovimentacaoTipo.ENTRADA ||
-    payload.tipo === MovimentacaoTipo.SAIDA;
+    payload.tipo === MOVIMENTACAO_TIPO.ENTRADA ||
+    payload.tipo === MOVIMENTACAO_TIPO.SAIDA;
 
   if (!isPrevisto || !isSupportedType) {
     return;
   }
 
   const agendaTipo =
-    payload.tipo === MovimentacaoTipo.SAIDA
+    payload.tipo === MOVIMENTACAO_TIPO.SAIDA
       ? AgendaTipo.PAGAR
       : AgendaTipo.RECEBER;
   const descricaoParts = [
@@ -189,15 +200,15 @@ async function getContaOrFail(contaId, fieldName, client = prisma) {
 function validateAccountsByType(payload) {
   const { tipo, contaOrigemId, contaDestinoId } = payload;
 
-  if (tipo === MovimentacaoTipo.ENTRADA && !contaDestinoId) {
+  if (tipo === MOVIMENTACAO_TIPO.ENTRADA && !contaDestinoId) {
     throw new AppError("Movimentacoes de entrada exigem contaDestinoId.", 400);
   }
 
-  if (tipo === MovimentacaoTipo.SAIDA && !contaOrigemId) {
+  if (tipo === MOVIMENTACAO_TIPO.SAIDA && !contaOrigemId) {
     throw new AppError("Movimentacoes de saida exigem contaOrigemId.", 400);
   }
 
-  if (tipo === MovimentacaoTipo.TRANSFERENCIA) {
+  if (tipo === MOVIMENTACAO_TIPO.TRANSFERENCIA) {
     if (!contaOrigemId || !contaDestinoId) {
       throw new AppError(
         "Transferencias exigem contaOrigemId e contaDestinoId.",
@@ -212,6 +223,58 @@ function validateAccountsByType(payload) {
       );
     }
   }
+
+  if (tipo === MOVIMENTACAO_TIPO.AJUSTE_SALDO) {
+    if (!contaDestinoId) {
+      throw new AppError(
+        "Ajuste de saldo exige contaDestinoId (conta ajustada).",
+        400,
+      );
+    }
+
+    if (contaOrigemId) {
+      throw new AppError("Ajuste de saldo nao permite contaOrigemId.", 400);
+    }
+  }
+}
+
+/**
+ * Normaliza payload de ajuste de saldo para valor assinado no banco.
+ * @param {object} payload
+ * @returns {object}
+ */
+function normalizePayload(payload) {
+  if (payload.tipo !== MOVIMENTACAO_TIPO.AJUSTE_SALDO) {
+    return payload;
+  }
+
+  const valorBase = Number(payload.valor);
+  const operacao = String(payload.ajusteSaldoOperacao || "").toUpperCase();
+
+  if (Number.isNaN(valorBase) || valorBase <= 0) {
+    throw new AppError(
+      "Ajuste de saldo exige valor numerico maior que zero.",
+      400,
+    );
+  }
+
+  if (!Object.values(AJUSTE_SALDO_OPERACAO).includes(operacao)) {
+    throw new AppError(
+      "Campo ajusteSaldoOperacao invalido para ajuste de saldo.",
+      400,
+    );
+  }
+
+  return {
+    ...payload,
+    valor:
+      operacao === AJUSTE_SALDO_OPERACAO.SUBTRAIR
+        ? -Math.abs(valorBase)
+        : Math.abs(valorBase),
+    categoria: "AJUSTE_SALDO",
+    tipoDespesa: null,
+    contaOrigemId: null,
+  };
 }
 
 /**
@@ -230,15 +293,16 @@ async function validateBusinessRules(empresa, payload, client = prisma) {
     saasLancamentoTipo,
     tipo,
   } = payload;
+  const isAjusteSaldo = tipo === MOVIMENTACAO_TIPO.AJUSTE_SALDO;
 
-  if (empresa.nome === "MaisQuiosque" && !projetoId) {
+  if (empresa.nome === "MaisQuiosque" && !projetoId && !isAjusteSaldo) {
     throw new AppError(
       "Movimentacoes da empresa MaisQuiosque exigem projetoId.",
       400,
     );
   }
 
-  if (projetoId) {
+  if (projetoId && !isAjusteSaldo) {
     const projeto = await client.projeto.findUnique({
       where: { id: Number(projetoId) },
     });
@@ -255,7 +319,7 @@ async function validateBusinessRules(empresa, payload, client = prisma) {
     }
   }
 
-  if (empresa.nome === "GiraKids" && subcategoria) {
+  if (empresa.nome === "GiraKids" && subcategoria && !isAjusteSaldo) {
     const allowed = ["TAKE_PARCERIA", "PELUCIA_PARCERIA", "OUTROS"];
 
     if (!allowed.includes(subcategoria)) {
@@ -263,11 +327,36 @@ async function validateBusinessRules(empresa, payload, client = prisma) {
     }
   }
 
-  if (empresa.nome !== "GiraKids" && subcategoria) {
+  if (empresa.nome !== "GiraKids" && subcategoria && !isAjusteSaldo) {
     throw new AppError(
       "Subcategoria so pode ser usada em movimentacoes da GiraKids.",
       400,
     );
+  }
+
+  if (isAjusteSaldo) {
+    if (payload.status !== MovimentacaoStatus.REALIZADO) {
+      throw new AppError("Ajuste de saldo deve ser REALIZADO.", 400);
+    }
+
+    if (categoria && categoria !== "AJUSTE_SALDO") {
+      throw new AppError(
+        "Ajuste de saldo deve usar categoria AJUSTE_SALDO.",
+        400,
+      );
+    }
+
+    if (tipoDespesa) {
+      throw new AppError("Ajuste de saldo nao permite tipoDespesa.", 400);
+    }
+
+    if (subcategoria) {
+      throw new AppError("Ajuste de saldo nao permite subcategoria.", 400);
+    }
+
+    if (projetoId) {
+      throw new AppError("Ajuste de saldo nao permite projetoId.", 400);
+    }
   }
 
   if (categoria === "CUSTO_FIXO") {
@@ -406,21 +495,21 @@ async function updateAccountBalances(tx, payload) {
 
   const decimalValue = toDecimal(valor);
 
-  if (tipo === MovimentacaoTipo.ENTRADA) {
+  if (tipo === MOVIMENTACAO_TIPO.ENTRADA) {
     await tx.contaBancaria.update({
       where: { id: Number(contaDestinoId) },
       data: { saldoAtual: { increment: decimalValue } },
     });
   }
 
-  if (tipo === MovimentacaoTipo.SAIDA) {
+  if (tipo === MOVIMENTACAO_TIPO.SAIDA) {
     await tx.contaBancaria.update({
       where: { id: Number(contaOrigemId) },
       data: { saldoAtual: { decrement: decimalValue } },
     });
   }
 
-  if (tipo === MovimentacaoTipo.TRANSFERENCIA) {
+  if (tipo === MOVIMENTACAO_TIPO.TRANSFERENCIA) {
     await tx.contaBancaria.update({
       where: { id: Number(contaOrigemId) },
       data: { saldoAtual: { decrement: decimalValue } },
@@ -429,6 +518,19 @@ async function updateAccountBalances(tx, payload) {
     await tx.contaBancaria.update({
       where: { id: Number(contaDestinoId) },
       data: { saldoAtual: { increment: decimalValue } },
+    });
+  }
+
+  if (tipo === MOVIMENTACAO_TIPO.AJUSTE_SALDO) {
+    const valorAjuste = Number(valor);
+    const valorAjusteAbs = toDecimal(Math.abs(valorAjuste));
+
+    await tx.contaBancaria.update({
+      where: { id: Number(contaDestinoId) },
+      data:
+        valorAjuste >= 0
+          ? { saldoAtual: { increment: valorAjusteAbs } }
+          : { saldoAtual: { decrement: valorAjusteAbs } },
     });
   }
 }
@@ -440,40 +542,43 @@ async function updateAccountBalances(tx, payload) {
  */
 async function createMovimentacao(payload, options = {}) {
   const client = options.tx || prisma;
-  validateAccountsByType(payload);
+  const normalizedPayload = normalizePayload(payload);
+  validateAccountsByType(normalizedPayload);
 
-  const empresa = await getEmpresaOrFail(payload.empresaId, client);
-  await validateBusinessRules(empresa, payload, client);
+  const empresa = await getEmpresaOrFail(normalizedPayload.empresaId, client);
+  await validateBusinessRules(empresa, normalizedPayload, client);
 
   await Promise.all([
-    getContaOrFail(payload.contaOrigemId, "contaOrigemId", client),
-    getContaOrFail(payload.contaDestinoId, "contaDestinoId", client),
+    getContaOrFail(normalizedPayload.contaOrigemId, "contaOrigemId", client),
+    getContaOrFail(normalizedPayload.contaDestinoId, "contaDestinoId", client),
   ]);
 
   const createInClient = async (tx) => {
     const created = await tx.movimentacao.create({
       data: {
-        data: new Date(payload.data),
-        valor: toDecimal(payload.valor),
-        tipo: payload.tipo,
-        categoria: payload.categoria || null,
-        tipoDespesa: payload.tipoDespesa || null,
-        canalOrigem: payload.canalOrigem?.trim() || null,
-        centroOperacao: payload.centroOperacao?.trim() || null,
-        referencia: payload.referencia || null,
-        status: payload.status,
-        subcategoria: payload.subcategoria || null,
-        empresaId: Number(payload.empresaId),
-        projetoId: payload.projetoId ? Number(payload.projetoId) : null,
-        saasClienteId: payload.saasClienteId
-          ? Number(payload.saasClienteId)
+        data: new Date(normalizedPayload.data),
+        valor: toDecimal(normalizedPayload.valor),
+        tipo: normalizedPayload.tipo,
+        categoria: normalizedPayload.categoria || null,
+        tipoDespesa: normalizedPayload.tipoDespesa || null,
+        canalOrigem: normalizedPayload.canalOrigem?.trim() || null,
+        centroOperacao: normalizedPayload.centroOperacao?.trim() || null,
+        referencia: normalizedPayload.referencia || null,
+        status: normalizedPayload.status,
+        subcategoria: normalizedPayload.subcategoria || null,
+        empresaId: Number(normalizedPayload.empresaId),
+        projetoId: normalizedPayload.projetoId
+          ? Number(normalizedPayload.projetoId)
           : null,
-        saasLancamentoTipo: payload.saasLancamentoTipo || null,
-        contaOrigemId: payload.contaOrigemId
-          ? Number(payload.contaOrigemId)
+        saasClienteId: normalizedPayload.saasClienteId
+          ? Number(normalizedPayload.saasClienteId)
           : null,
-        contaDestinoId: payload.contaDestinoId
-          ? Number(payload.contaDestinoId)
+        saasLancamentoTipo: normalizedPayload.saasLancamentoTipo || null,
+        contaOrigemId: normalizedPayload.contaOrigemId
+          ? Number(normalizedPayload.contaOrigemId)
+          : null,
+        contaDestinoId: normalizedPayload.contaDestinoId
+          ? Number(normalizedPayload.contaDestinoId)
           : null,
       },
       include: {
@@ -485,12 +590,12 @@ async function createMovimentacao(payload, options = {}) {
       },
     });
 
-    await updateAccountBalances(tx, payload);
+    await updateAccountBalances(tx, normalizedPayload);
     await syncSelfMachineFromMovimentacao(tx, created, empresa.nome);
 
-    if (payload.status === MovimentacaoStatus.PREVISTO) {
+    if (normalizedPayload.status === MovimentacaoStatus.PREVISTO) {
       const marker = `[AUTO_MOV_ID:${created.id}]`;
-      await createAgendaFromPrevisto(tx, payload, { marker });
+      await createAgendaFromPrevisto(tx, normalizedPayload, { marker });
     }
 
     return created;
@@ -537,7 +642,7 @@ async function deleteMovimentacao(movimentacaoId) {
     // Estorna o efeito financeiro para deixar o saldo como se o lançamento nunca existisse.
     if (movimentacao.status === MovimentacaoStatus.REALIZADO) {
       if (
-        movimentacao.tipo === MovimentacaoTipo.ENTRADA &&
+        movimentacao.tipo === MOVIMENTACAO_TIPO.ENTRADA &&
         movimentacao.contaDestinoId
       ) {
         await tx.contaBancaria.update({
@@ -551,7 +656,7 @@ async function deleteMovimentacao(movimentacaoId) {
       }
 
       if (
-        movimentacao.tipo === MovimentacaoTipo.SAIDA &&
+        movimentacao.tipo === MOVIMENTACAO_TIPO.SAIDA &&
         movimentacao.contaOrigemId
       ) {
         await tx.contaBancaria.update({
@@ -564,7 +669,7 @@ async function deleteMovimentacao(movimentacaoId) {
         });
       }
 
-      if (movimentacao.tipo === MovimentacaoTipo.TRANSFERENCIA) {
+      if (movimentacao.tipo === MOVIMENTACAO_TIPO.TRANSFERENCIA) {
         if (movimentacao.contaOrigemId) {
           await tx.contaBancaria.update({
             where: { id: movimentacao.contaOrigemId },
@@ -586,6 +691,28 @@ async function deleteMovimentacao(movimentacaoId) {
             },
           });
         }
+      }
+
+      if (
+        movimentacao.tipo === MOVIMENTACAO_TIPO.AJUSTE_SALDO &&
+        movimentacao.contaDestinoId
+      ) {
+        const valorAjuste = new Prisma.Decimal(movimentacao.valor);
+
+        await tx.contaBancaria.update({
+          where: { id: movimentacao.contaDestinoId },
+          data: valorAjuste.gte(0)
+            ? {
+                saldoAtual: {
+                  decrement: valorAjuste,
+                },
+              }
+            : {
+                saldoAtual: {
+                  increment: valorAjuste.abs(),
+                },
+              },
+        });
       }
     }
 
