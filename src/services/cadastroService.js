@@ -2,6 +2,29 @@ const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 
+function getContaAccessWhere(user) {
+  if (!user || user.perfil !== "CAIXA") {
+    return {};
+  }
+
+  const contaIds = Array.isArray(user.contaBancariaIds)
+    ? user.contaBancariaIds
+        .map((value) => Number(value))
+        .filter((value) => Number.isInteger(value) && value > 0)
+    : user.contaBancariaId
+      ? [Number(user.contaBancariaId)]
+      : [];
+
+  if (!contaIds.length) {
+    throw new AppError(
+      "Usuario CAIXA sem contas autorizadas. Contate um administrador.",
+      403,
+    );
+  }
+
+  return { id: { in: contaIds } };
+}
+
 /**
  * Converte valores para Decimal do Prisma.
  * @param {number | string} value Valor bruto.
@@ -94,10 +117,14 @@ async function deleteEmpresa(id) {
 /**
  * Lista contas bancarias globais.
  * @param {{ empresaId?: string }} _query Parametros de consulta (ignorado).
+ * @param {{ perfil?: string, contaBancariaId?: number | null, contaBancariaIds?: number[] } | undefined} user Usuario autenticado.
  * @returns {Promise<object[]>}
  */
-async function listContas(_query) {
+async function listContas(_query, user) {
+  const where = getContaAccessWhere(user);
+
   return prisma.contaBancaria.findMany({
+    where,
     orderBy: [{ banco: "asc" }, { nome: "asc" }],
   });
 }

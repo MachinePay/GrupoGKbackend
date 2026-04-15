@@ -73,7 +73,7 @@ async function deleteEmpresa(req, res, next) {
  */
 async function listContas(req, res, next) {
   try {
-    const data = await cadastroService.listContas(req.query);
+    const data = await cadastroService.listContas(req.query, req.user);
     res.json(data);
   } catch (error) {
     next(error);
