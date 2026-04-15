@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const authMiddleware = require("../middlewares/authMiddleware");
+const { authenticate } = require("../middlewares/authMiddleware");
 const usuarioController = require("../controllers/usuarioController");
 const AppError = require("../middlewares/appError");
 
@@ -20,9 +20,9 @@ function validarAdmin(req, res, next) {
 }
 
 // Rotas de usuário (todas protegidas, gerenciamento só para ADMIN)
-router.get("/", authMiddleware, usuarioController.listar);
-router.post("/", authMiddleware, validarAdmin, usuarioController.criar);
-router.put("/:id", authMiddleware, validarAdmin, usuarioController.atualizar);
-router.delete("/:id", authMiddleware, validarAdmin, usuarioController.deletar);
+router.get("/", authenticate, usuarioController.listar);
+router.post("/", authenticate, validarAdmin, usuarioController.criar);
+router.put("/:id", authenticate, validarAdmin, usuarioController.atualizar);
+router.delete("/:id", authenticate, validarAdmin, usuarioController.deletar);
 
 module.exports = router;
