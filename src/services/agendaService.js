@@ -1,7 +1,10 @@
 const { AgendaStatus, Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
-const { createMovimentacao } = require("./movimentacaoService");
+const {
+  createMovimentacao,
+  deleteMovimentacao,
+} = require("./movimentacaoService");
 
 /**
  * Converte valores para Decimal do Prisma.
@@ -10,6 +13,105 @@ const { createMovimentacao } = require("./movimentacaoService");
  */
 function toDecimal(value) {
   return new Prisma.Decimal(value);
+}
+
+/**
+ * Monta a referencia padrao de movimentacao para um item de agenda.
+ * @param {{ titulo: string, descricao?: string | null }} source
+ * @returns {string}
+ */
+function buildAgendaReference(source) {
+  const titulo = String(source.titulo || "").trim();
+  const descricao = source.descricao ? String(source.descricao).trim() : "";
+
+  return descricao ? `${titulo} - ${descricao}` : titulo;
+}
+
+/**
+ * Retorna o tipo de movimentacao equivalente ao tipo da agenda.
+ * @param {"PAGAR" | "RECEBER"} agendaTipo
+ * @returns {"SAIDA" | "ENTRADA"}
+ */
+function getMovimentacaoTipoFromAgendaTipo(agendaTipo) {
+  return agendaTipo === "PAGAR" ? "SAIDA" : "ENTRADA";
+}
+
+/**
+ * Busca a movimentacao vinculada a um item de agenda realizado.
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx
+ * @param {object} agenda
+ * @returns {Promise<object | null>}
+ */
+async function findLinkedMovimentacao(tx, agenda) {
+  const referencia =
+    agenda.origemExterna && agenda.referenciaExternaId
+      ? `Aprovado via AgarraMais - ${agenda.referenciaExternaId}`
+      : buildAgendaReference(agenda);
+
+  const matches = await tx.movimentacao.findMany({
+    where: {
+      empresaId: agenda.empresaId,
+      status: "REALIZADO",
+      tipo: getMovimentacaoTipoFromAgendaTipo(agenda.tipo),
+      valor: agenda.valor,
+      referencia,
+    },
+    select: {
+      id: true,
+      valor: true,
+      tipo: true,
+      contaOrigemId: true,
+      contaDestinoId: true,
+    },
+    orderBy: [{ createdAt: "desc" }],
+    take: 2,
+  });
+
+  if (matches.length > 1) {
+    throw new AppError(
+      "Mais de uma movimentacao realizada corresponde a este item. Edite ou exclua pelo modulo de Lancamentos para manter consistencia.",
+      409,
+    );
+  }
+
+  return matches[0] ?? null;
+}
+
+/**
+ * Aplica ajuste de saldo quando o valor de uma movimentacao realizada e alterado.
+ * @param {import("@prisma/client").Prisma.TransactionClient} tx
+ * @param {{ tipo: string, contaOrigemId?: number | null, contaDestinoId?: number | null, valor: Prisma.Decimal }} movimentacao
+ * @param {Prisma.Decimal} novoValor
+ * @returns {Promise<void>}
+ */
+async function applySaldoDiffForMovimentacaoUpdate(
+  tx,
+  movimentacao,
+  novoValor,
+) {
+  const diferenca = new Prisma.Decimal(novoValor).minus(movimentacao.valor);
+
+  if (diferenca.equals(0)) {
+    return;
+  }
+
+  if (movimentacao.tipo === "ENTRADA" && movimentacao.contaDestinoId) {
+    await tx.contaBancaria.update({
+      where: { id: movimentacao.contaDestinoId },
+      data: diferenca.gte(0)
+        ? { saldoAtual: { increment: diferenca } }
+        : { saldoAtual: { decrement: diferenca.abs() } },
+    });
+  }
+
+  if (movimentacao.tipo === "SAIDA" && movimentacao.contaOrigemId) {
+    await tx.contaBancaria.update({
+      where: { id: movimentacao.contaOrigemId },
+      data: diferenca.gte(0)
+        ? { saldoAtual: { decrement: diferenca } }
+        : { saldoAtual: { increment: diferenca.abs() } },
+    });
+  }
 }
 
 /**
@@ -305,60 +407,98 @@ async function createAgendaItem(payload, usuarioId) {
  * @returns {Promise<object>}
  */
 async function updateAgendaItem(agendaId, payload) {
-  const [agenda, empresa] = await Promise.all([
-    prisma.agenda.findUnique({ where: { id: Number(agendaId) } }),
-    prisma.empresa.findUnique({ where: { id: Number(payload.empresaId) } }),
-  ]);
+  return prisma.$transaction(async (tx) => {
+    const [agenda, empresa] = await Promise.all([
+      tx.agenda.findUnique({ where: { id: Number(agendaId) } }),
+      tx.empresa.findUnique({ where: { id: Number(payload.empresaId) } }),
+    ]);
 
-  if (!agenda) {
-    throw new AppError("Item de agenda nao encontrado.", 404);
-  }
-
-  if (agenda.status === "REALIZADO") {
-    throw new AppError(
-      "Nao e possivel editar um item de agenda ja realizado.",
-      400,
-    );
-  }
-
-  if (!empresa) {
-    throw new AppError("Empresa nao encontrada para vincular agenda.", 404);
-  }
-
-  // Validar fornecedor se origemTipo = FORNECEDOR
-  if (payload.origemTipo === "FORNECEDOR" && payload.fornecedorId) {
-    const fornecedor = await prisma.fornecedor.findUnique({
-      where: { id: Number(payload.fornecedorId) },
-    });
-    if (!fornecedor) {
-      throw new AppError("Fornecedor nao encontrado.", 404);
+    if (!agenda) {
+      throw new AppError("Item de agenda nao encontrado.", 404);
     }
-  }
 
-  return prisma.agenda.update({
-    where: { id: Number(agendaId) },
-    data: {
-      data: new Date(payload.data),
-      titulo: payload.titulo.trim(),
-      descricao: payload.descricao?.trim() || null,
-      origem: payload.origem?.trim() || null,
-      origemTipo: payload.origemTipo || null,
-      tipoPagamento: payload.tipoPagamento || null,
-      valor: toDecimal(payload.valor),
-      prioridade: payload.prioridade.trim(),
-      status: payload.status,
-      tipo: payload.tipo,
-      recurrenteAte: payload.recurrenteAte
-        ? new Date(payload.recurrenteAte)
-        : null,
-      fornecedorId: payload.fornecedorId ? Number(payload.fornecedorId) : null,
-      empresaId: Number(payload.empresaId),
-    },
-    include: {
-      empresa: { select: { id: true, nome: true } },
-      fornecedor: { select: { id: true, nome: true } },
-      usuarioCriacao: { select: { id: true, nome: true, email: true } },
-    },
+    if (!empresa) {
+      throw new AppError("Empresa nao encontrada para vincular agenda.", 404);
+    }
+
+    if (agenda.status === "REALIZADO" && payload.status !== "REALIZADO") {
+      throw new AppError(
+        "Nao e possivel alterar o status de um item ja realizado.",
+        400,
+      );
+    }
+
+    if (agenda.status === "REALIZADO" && payload.tipo !== agenda.tipo) {
+      throw new AppError(
+        "Nao e possivel alterar o tipo de um item ja realizado.",
+        400,
+      );
+    }
+
+    // Validar fornecedor se origemTipo = FORNECEDOR
+    if (payload.origemTipo === "FORNECEDOR" && payload.fornecedorId) {
+      const fornecedor = await tx.fornecedor.findUnique({
+        where: { id: Number(payload.fornecedorId) },
+      });
+      if (!fornecedor) {
+        throw new AppError("Fornecedor nao encontrado.", 404);
+      }
+    }
+
+    if (agenda.status === "REALIZADO") {
+      const movimentacao = await findLinkedMovimentacao(tx, agenda);
+
+      if (movimentacao) {
+        const novoValor = toDecimal(payload.valor);
+        await applySaldoDiffForMovimentacaoUpdate(tx, movimentacao, novoValor);
+
+        const novaReferencia =
+          agenda.origemExterna && agenda.referenciaExternaId
+            ? `Aprovado via AgarraMais - ${agenda.referenciaExternaId}`
+            : buildAgendaReference({
+                titulo: payload.titulo,
+                descricao: payload.descricao,
+              });
+
+        await tx.movimentacao.update({
+          where: { id: movimentacao.id },
+          data: {
+            data: new Date(payload.data),
+            valor: novoValor,
+            empresaId: Number(payload.empresaId),
+            referencia: novaReferencia,
+          },
+        });
+      }
+    }
+
+    return tx.agenda.update({
+      where: { id: Number(agendaId) },
+      data: {
+        data: new Date(payload.data),
+        titulo: payload.titulo.trim(),
+        descricao: payload.descricao?.trim() || null,
+        origem: payload.origem?.trim() || null,
+        origemTipo: payload.origemTipo || null,
+        tipoPagamento: payload.tipoPagamento || null,
+        valor: toDecimal(payload.valor),
+        prioridade: payload.prioridade.trim(),
+        status: payload.status,
+        tipo: payload.tipo,
+        recurrenteAte: payload.recurrenteAte
+          ? new Date(payload.recurrenteAte)
+          : null,
+        fornecedorId: payload.fornecedorId
+          ? Number(payload.fornecedorId)
+          : null,
+        empresaId: Number(payload.empresaId),
+      },
+      include: {
+        empresa: { select: { id: true, nome: true } },
+        fornecedor: { select: { id: true, nome: true } },
+        usuarioCriacao: { select: { id: true, nome: true, email: true } },
+      },
+    });
   });
 }
 
@@ -368,27 +508,30 @@ async function updateAgendaItem(agendaId, payload) {
  * @returns {Promise<object>}
  */
 async function deleteAgendaItem(agendaId) {
-  const agenda = await prisma.agenda.findUnique({
-    where: { id: Number(agendaId) },
-  });
+  return prisma.$transaction(async (tx) => {
+    const agenda = await tx.agenda.findUnique({
+      where: { id: Number(agendaId) },
+    });
 
-  if (!agenda) {
-    throw new AppError("Item de agenda nao encontrado.", 404);
-  }
+    if (!agenda) {
+      throw new AppError("Item de agenda nao encontrado.", 404);
+    }
 
-  if (agenda.status === "REALIZADO") {
-    throw new AppError(
-      "Nao e possivel excluir item de agenda ja realizado.",
-      400,
-    );
-  }
+    if (agenda.status === "REALIZADO") {
+      const movimentacao = await findLinkedMovimentacao(tx, agenda);
 
-  return prisma.agenda.delete({
-    where: { id: Number(agendaId) },
-    select: {
-      id: true,
-      titulo: true,
-    },
+      if (movimentacao) {
+        await deleteMovimentacao(movimentacao.id, { tx });
+      }
+    }
+
+    return tx.agenda.delete({
+      where: { id: Number(agendaId) },
+      select: {
+        id: true,
+        titulo: true,
+      },
+    });
   });
 }
 

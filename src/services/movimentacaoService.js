@@ -710,8 +710,8 @@ async function createMovimentacao(payload, options = {}) {
  * @param {number | string} movimentacaoId Identificador da movimentacao.
  * @returns {Promise<{id: number}>}
  */
-async function deleteMovimentacao(movimentacaoId) {
-  return prisma.$transaction(async (tx) => {
+async function deleteMovimentacao(movimentacaoId, options = {}) {
+  const deleteInClient = async (tx) => {
     const movimentacao = await tx.movimentacao.findUnique({
       where: { id: Number(movimentacaoId) },
       select: {
@@ -866,7 +866,11 @@ async function deleteMovimentacao(movimentacaoId) {
       statusRemovido: movimentacao.status,
       saldoEstornado: movimentacao.status === MovimentacaoStatus.REALIZADO,
     };
-  });
+  };
+
+  return options.tx
+    ? deleteInClient(options.tx)
+    : prisma.$transaction(deleteInClient);
 }
 
 /**
