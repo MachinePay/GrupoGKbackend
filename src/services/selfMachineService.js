@@ -20,10 +20,24 @@ function decimalToNumber(value) {
  * @returns {object}
  */
 function normalizeContrato(contrato) {
+  const custoServidor = decimalToNumber(contrato.custoServidor);
+  const custoBancoDados = decimalToNumber(contrato.custoBancoDados);
+  const custoFrontend = decimalToNumber(contrato.custoFrontend);
+  const custoOutros = decimalToNumber(contrato.custoOutros);
+
   return {
     ...contrato,
     valorDesenvolvimento: decimalToNumber(contrato.valorDesenvolvimento),
     valorMensalidade: decimalToNumber(contrato.valorMensalidade),
+    custoServidor,
+    custoBancoDados,
+    custoFrontend,
+    custoOutros,
+    custoTotalSistema:
+      (custoServidor || 0) +
+      (custoBancoDados || 0) +
+      (custoFrontend || 0) +
+      (custoOutros || 0),
     temPedidoLancado: Boolean(contrato.temPedidoLancado),
     temPagamentoLancado: Boolean(contrato.temPagamentoLancado),
   };
@@ -172,6 +186,33 @@ function getStatusMensalidadeCalculado(contrato) {
     statusMensalidade: "AGUARDANDO_PAGAMENTO",
     needsUpdate: contrato.statusMensalidade !== "AGUARDANDO_PAGAMENTO",
   };
+}
+
+/**
+ * Calcula dias em atraso ou dias restantes ate a cobranca da mensalidade do mes corrente.
+ * @param {object} contrato
+ * @param {Date} hoje
+ * @returns {{ status: "PAGO" | "ATRASADO" | "A_VENCER", dias: number, vencimento: Date }}
+ */
+function computeCobranca(contrato, hoje) {
+  const inicioMensalidade = new Date(contrato.dataInicioMensalidade);
+  const ultimaMensalidadePagaEm = contrato.ultimaMensalidadePagaEm
+    ? new Date(contrato.ultimaMensalidadePagaEm)
+    : null;
+  const vencimento = getMesVencimento(inicioMensalidade, hoje);
+  const umDiaMs = 24 * 60 * 60 * 1000;
+
+  if (isSameMonthYear(ultimaMensalidadePagaEm, hoje)) {
+    return { status: "PAGO", dias: 0, vencimento };
+  }
+
+  if (hoje > vencimento) {
+    const dias = Math.ceil((hoje.getTime() - vencimento.getTime()) / umDiaMs);
+    return { status: "ATRASADO", dias, vencimento };
+  }
+
+  const dias = Math.ceil((vencimento.getTime() - hoje.getTime()) / umDiaMs);
+  return { status: "A_VENCER", dias, vencimento };
 }
 
 /**
@@ -335,6 +376,24 @@ function validateContratoPayload(payload, partial = false) {
     throw new AppError("Campo valorDesenvolvimento invalido.", 400);
   }
 
+  const custoFields = [
+    "custoServidor",
+    "custoBancoDados",
+    "custoFrontend",
+    "custoOutros",
+  ];
+
+  for (const field of custoFields) {
+    if (
+      payload[field] !== undefined &&
+      payload[field] !== null &&
+      payload[field] !== "" &&
+      (Number.isNaN(Number(payload[field])) || Number(payload[field]) < 0)
+    ) {
+      throw new AppError(`Campo ${field} invalido.`, 400);
+    }
+  }
+
   if (
     payload.dataEmissao !== undefined &&
     Number.isNaN(new Date(payload.dataEmissao).getTime())
@@ -423,6 +482,30 @@ function mapPayloadToData(payload) {
     }),
     ...(payload.valorMensalidade !== undefined && {
       valorMensalidade: Number(payload.valorMensalidade),
+    }),
+    ...(payload.custoServidor !== undefined && {
+      custoServidor:
+        payload.custoServidor === null || payload.custoServidor === ""
+          ? null
+          : Number(payload.custoServidor),
+    }),
+    ...(payload.custoBancoDados !== undefined && {
+      custoBancoDados:
+        payload.custoBancoDados === null || payload.custoBancoDados === ""
+          ? null
+          : Number(payload.custoBancoDados),
+    }),
+    ...(payload.custoFrontend !== undefined && {
+      custoFrontend:
+        payload.custoFrontend === null || payload.custoFrontend === ""
+          ? null
+          : Number(payload.custoFrontend),
+    }),
+    ...(payload.custoOutros !== undefined && {
+      custoOutros:
+        payload.custoOutros === null || payload.custoOutros === ""
+          ? null
+          : Number(payload.custoOutros),
     }),
     ...(payload.dataInicioMensalidade !== undefined && {
       dataInicioMensalidade: new Date(payload.dataInicioMensalidade),
@@ -632,6 +715,11 @@ async function getSaasRelatorio() {
       valorMensalidade: true,
       valorDesenvolvimento: true,
       dataInicioMensalidade: true,
+      ultimaMensalidadePagaEm: true,
+      custoServidor: true,
+      custoBancoDados: true,
+      custoFrontend: true,
+      custoOutros: true,
       createdAt: true,
     },
   });
@@ -687,6 +775,68 @@ async function getSaasRelatorio() {
   const lucro = receitaRealizada - despesasTotal;
   const margemLucro =
     receitaRealizada > 0 ? (lucro / receitaRealizada) * 100 : 0;
+
+  // Custos de infraestrutura por sistema (servidor, banco de dados, frontend/vercel, outros)
+  const custosPorSistema = contratos
+    .map((c) => {
+      const custoServidor = Number(c.custoServidor || 0);
+      const custoBancoDados = Number(c.custoBancoDados || 0);
+      const custoFrontend = Number(c.custoFrontend || 0);
+      const custoOutros = Number(c.custoOutros || 0);
+      return {
+        id: c.id,
+        nomeCliente: c.nomeCliente,
+        nomeSistema: c.nomeSistema,
+        custoServidor,
+        custoBancoDados,
+        custoFrontend,
+        custoOutros,
+        total: custoServidor + custoBancoDados + custoFrontend + custoOutros,
+      };
+    })
+    .filter((c) => c.total > 0)
+    .sort((a, b) => b.total - a.total);
+
+  const totalCustosSistema = custosPorSistema.reduce(
+    (acc, c) => acc + c.total,
+    0,
+  );
+  const despesasGerais = despesasTotal + totalCustosSistema;
+  const lucroOperacional = receitaRealizada - despesasGerais;
+  const margemOperacional =
+    receitaRealizada > 0 ? (lucroOperacional / receitaRealizada) * 100 : 0;
+
+  // Cobrancas de mensalidade: dias em atraso ou dias restantes para cobrar, por sistema ativo
+  const cobrancas = contratos
+    .filter(
+      (c) => c.statusSistema === "ATIVO" || c.statusSistema === "ATRASADO",
+    )
+    .map((c) => {
+      const info = computeCobranca(c, hoje);
+      return {
+        id: c.id,
+        nomeCliente: c.nomeCliente,
+        nomeSistema: c.nomeSistema,
+        valorMensalidade: Number(c.valorMensalidade || 0),
+        vencimento: info.vencimento,
+        status: info.status,
+        dias: info.dias,
+      };
+    })
+    .sort((a, b) => {
+      const ordem = { ATRASADO: 0, A_VENCER: 1, PAGO: 2 };
+      if (ordem[a.status] !== ordem[b.status]) {
+        return ordem[a.status] - ordem[b.status];
+      }
+      return a.status === "ATRASADO" ? b.dias - a.dias : a.dias - b.dias;
+    });
+
+  const totalCobrancasAtrasadas = cobrancas
+    .filter((c) => c.status === "ATRASADO")
+    .reduce((acc, c) => acc + c.valorMensalidade, 0);
+  const totalCobrancasAVencer = cobrancas
+    .filter((c) => c.status === "A_VENCER")
+    .reduce((acc, c) => acc + c.valorMensalidade, 0);
 
   // Gastos por categoria
   const gastosMap = {};
@@ -824,13 +974,27 @@ async function getSaasRelatorio() {
       contratosAtrasados: atrasados.length,
       contratosPausados: pausados.length,
       receita30Dias,
+      totalCustosSistema,
+      totalCobrancasAtrasadas,
+      totalCobrancasAVencer,
     },
-    financeiro: { receitaRealizada, despesasTotal, lucro, margemLucro },
+    financeiro: {
+      receitaRealizada,
+      despesasTotal,
+      lucro,
+      margemLucro,
+      custosSistema: totalCustosSistema,
+      despesasGerais,
+      lucroOperacional,
+      margemOperacional,
+    },
     gastosPorCategoria,
+    custosPorSistema,
     receitasPorCliente,
     historicoMensal,
     crescimento: { contratosEsteMes, contratosMesAnterior, taxaCrescimento },
     distribuicaoPlanos,
+    cobrancas,
   };
 }
 

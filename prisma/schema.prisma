@@ -180,6 +180,10 @@ model SaasCliente {
   descricao              String?
   prazosDescricao        String?             @map("prazos_descricao")
   ultimoPedidoPagamentoAt DateTime?          @map("ultimo_pedido_pagamento_at")
+  custoServidor          Decimal?            @map("custo_servidor") @db.Decimal(14, 2)
+  custoBancoDados        Decimal?            @map("custo_banco_dados") @db.Decimal(14, 2)
+  custoFrontend          Decimal?            @map("custo_frontend") @db.Decimal(14, 2)
+  custoOutros            Decimal?            @map("custo_outros") @db.Decimal(14, 2)
   movimentacoes          Movimentacao[]
   createdAt              DateTime            @default(now())
   updatedAt              DateTime            @updatedAt
