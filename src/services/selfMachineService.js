@@ -324,9 +324,7 @@ function validateContratoPayload(payload, partial = false) {
     "nomeCliente",
     "nomeSistema",
     "vendedor",
-    "numeroPc",
     "dataEmissao",
-    "tipoRemessa",
     "valorMensalidade",
     "dataInicioMensalidade",
     "tipoPlano",
@@ -408,13 +406,6 @@ function validateContratoPayload(payload, partial = false) {
     throw new AppError("Campo dataInicioMensalidade invalido.", 400);
   }
 
-  if (
-    payload.tipoRemessa &&
-    !["UNICA", "RECORRENTE"].includes(payload.tipoRemessa)
-  ) {
-    throw new AppError("Campo tipoRemessa invalido.", 400);
-  }
-
   if (payload.tipoPlano && !["FULL", "SMALL"].includes(payload.tipoPlano)) {
     throw new AppError("Campo tipoPlano invalido.", 400);
   }
@@ -464,14 +455,17 @@ function mapPayloadToData(payload) {
     ...(payload.vendedor !== undefined && {
       vendedor: String(payload.vendedor).trim(),
     }),
-    ...(payload.numeroPc !== undefined && {
-      numeroPc: String(payload.numeroPc).trim(),
-    }),
     ...(payload.dataEmissao !== undefined && {
       dataEmissao: new Date(payload.dataEmissao),
     }),
-    ...(payload.tipoRemessa !== undefined && {
-      tipoRemessa: payload.tipoRemessa,
+    ...(payload.linkSistema !== undefined && {
+      linkSistema: payload.linkSistema?.trim() || null,
+    }),
+    ...(payload.adminEmail !== undefined && {
+      adminEmail: payload.adminEmail?.trim() || null,
+    }),
+    ...(payload.adminSenha !== undefined && {
+      adminSenha: payload.adminSenha?.trim() || null,
     }),
     ...(payload.valorDesenvolvimento !== undefined && {
       valorDesenvolvimento:

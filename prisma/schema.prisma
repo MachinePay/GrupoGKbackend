@@ -164,9 +164,10 @@ model SaasCliente {
   logoParceiraUrl        String?             @map("logo_parceira_url")
   logoSelfMachineUrl     String?             @map("logo_selfmachine_url")
   vendedor               String
-  numeroPc               String              @map("numero_pc")
   dataEmissao            DateTime            @map("data_emissao")
-  tipoRemessa            TipoRemessa
+  linkSistema            String?             @map("link_sistema")
+  adminEmail             String?             @map("admin_email")
+  adminSenha             String?             @map("admin_senha")
   valorDesenvolvimento   Decimal?            @map("valor_desenvolvimento") @db.Decimal(14, 2)
   valorMensalidade       Decimal             @map("valor_mensalidade") @db.Decimal(14, 2)
   dataInicioMensalidade  DateTime            @map("data_inicio_mensalidade")
@@ -275,11 +276,6 @@ enum PerfilUsuario {
 enum TemaUsuario {
   LIGHT
   DARK
-}
-
-enum TipoRemessa {
-  UNICA
-  RECORRENTE
 }
 
 enum StatusSistemaSaas {
