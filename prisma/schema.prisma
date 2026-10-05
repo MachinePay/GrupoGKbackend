@@ -195,6 +195,14 @@ model SaasCliente {
   @@map("saas_clientes")
 }
 
+model CotacaoMoeda {
+  moeda        String   @id
+  valorEmReais Decimal  @map("valor_em_reais") @db.Decimal(14, 4)
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  @@map("cotacoes_moeda")
+}
+
 enum MovimentacaoTipo {
   ENTRADA
   SAIDA

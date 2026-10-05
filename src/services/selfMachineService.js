@@ -1,5 +1,6 @@
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
+const cotacaoService = require("./cotacaoService");
 
 /**
  * Converte Decimal/nullable em numero.
@@ -698,6 +699,7 @@ async function gerarPedidoPagamento(id) {
  * @returns {Promise<object>}
  */
 async function getSaasRelatorio() {
+  const cotacaoDolar = await cotacaoService.getCotacao("USD");
   const contratos = await prisma.saasCliente.findMany({
     select: {
       id: true,
@@ -770,13 +772,16 @@ async function getSaasRelatorio() {
   const margemLucro =
     receitaRealizada > 0 ? (lucro / receitaRealizada) * 100 : 0;
 
-  // Custos de infraestrutura por sistema (servidor, banco de dados, frontend/vercel, outros)
+  // Custos de infraestrutura por sistema, cadastrados em USD (servidor, banco de dados, frontend/vercel, outros).
+  // Convertidos para BRL pela cotacao do dolar cadastrada em Configuracoes.
   const custosPorSistema = contratos
     .map((c) => {
       const custoServidor = Number(c.custoServidor || 0);
       const custoBancoDados = Number(c.custoBancoDados || 0);
       const custoFrontend = Number(c.custoFrontend || 0);
       const custoOutros = Number(c.custoOutros || 0);
+      const total =
+        custoServidor + custoBancoDados + custoFrontend + custoOutros;
       return {
         id: c.id,
         nomeCliente: c.nomeCliente,
@@ -785,7 +790,8 @@ async function getSaasRelatorio() {
         custoBancoDados,
         custoFrontend,
         custoOutros,
-        total: custoServidor + custoBancoDados + custoFrontend + custoOutros,
+        total,
+        totalReais: total * cotacaoDolar,
       };
     })
     .filter((c) => c.total > 0)
@@ -795,7 +801,8 @@ async function getSaasRelatorio() {
     (acc, c) => acc + c.total,
     0,
   );
-  const despesasGerais = despesasTotal + totalCustosSistema;
+  const totalCustosSistemaReais = totalCustosSistema * cotacaoDolar;
+  const despesasGerais = despesasTotal + totalCustosSistemaReais;
   const lucroOperacional = receitaRealizada - despesasGerais;
   const margemOperacional =
     receitaRealizada > 0 ? (lucroOperacional / receitaRealizada) * 100 : 0;
@@ -978,6 +985,8 @@ async function getSaasRelatorio() {
       lucro,
       margemLucro,
       custosSistema: totalCustosSistema,
+      custosSistemaReais: totalCustosSistemaReais,
+      cotacaoDolar,
       despesasGerais,
       lucroOperacional,
       margemOperacional,
