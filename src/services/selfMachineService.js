@@ -611,11 +611,34 @@ async function updateSaasContrato(id, payload) {
 
   const exists = await prisma.saasCliente.findUnique({
     where: { id: Number(id) },
-    select: { id: true, meioPagamento: true, chavePix: true },
+    select: {
+      id: true,
+      meioPagamento: true,
+      chavePix: true,
+      statusSistema: true,
+      statusMensalidade: true,
+    },
   });
 
   if (!exists) {
     throw new AppError("Contrato SaaS nao encontrado.", 404);
+  }
+
+  // Mantem status do sistema e da mensalidade coerentes quando so um deles e alterado:
+  // a mensalidade de um sistema pausado e sempre recalculada como PAUSADO.
+  const sistemaAlterado =
+    payload.statusSistema !== undefined &&
+    payload.statusSistema !== exists.statusSistema;
+  const mensalidadeAlterada =
+    payload.statusMensalidade !== undefined &&
+    payload.statusMensalidade !== exists.statusMensalidade;
+
+  if (mensalidadeAlterada && !sistemaAlterado) {
+    if (payload.statusMensalidade === "PAUSADO") {
+      payload = { ...payload, statusSistema: "PAUSADO" };
+    } else if (exists.statusSistema === "PAUSADO") {
+      payload = { ...payload, statusSistema: "ATIVO" };
+    }
   }
 
   const meioPagamentoFinal =
@@ -774,7 +797,9 @@ async function getSaasRelatorio() {
 
   // Custos de infraestrutura por sistema, cadastrados em USD (servidor, banco de dados, frontend/vercel, outros).
   // Convertidos para BRL pela cotacao do dolar cadastrada em Configuracoes.
+  // Sistemas pausados nao entram nos custos.
   const custosPorSistema = contratos
+    .filter((c) => c.statusSistema !== "PAUSADO")
     .map((c) => {
       const custoServidor = Number(c.custoServidor || 0);
       const custoBancoDados = Number(c.custoBancoDados || 0);
