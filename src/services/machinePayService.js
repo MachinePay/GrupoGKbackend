@@ -588,12 +588,66 @@ async function getCompetencia(competencia) {
 }
 
 /**
+ * Le a configuracao global do Machine Pay (padrao: cobranca desativada).
+ * Tolera a tabela ainda nao migrada para nao derrubar a tela.
+ * @returns {Promise<{ cobrancaAtiva: boolean, updatedBy: string|null, updatedAt: Date|null }>}
+ */
+async function getConfig() {
+  try {
+    const config = await prisma.machinePayConfig.findUnique({ where: { id: 1 } });
+    return {
+      cobrancaAtiva: Boolean(config?.cobrancaAtiva),
+      updatedBy: config?.updatedBy ?? null,
+      updatedAt: config?.updatedAt ?? null,
+    };
+  } catch (error) {
+    if (error?.code === "P2021") {
+      return { cobrancaAtiva: false, updatedBy: null, updatedAt: null };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Liga ou desliga a cobranca (quando desligada, o modulo e apenas cadastro).
+ * @param {{ cobrancaAtiva: boolean }} payload
+ * @param {object} user
+ * @returns {Promise<object>}
+ */
+async function updateConfig(payload = {}, user) {
+  if (typeof payload.cobrancaAtiva !== "boolean") {
+    throw new AppError("Informe cobrancaAtiva como verdadeiro ou falso.", 400);
+  }
+
+  const data = {
+    cobrancaAtiva: payload.cobrancaAtiva,
+    updatedBy: user?.email || null,
+  };
+
+  await prisma.machinePayConfig.upsert({
+    where: { id: 1 },
+    create: { id: 1, ...data },
+    update: data,
+  });
+
+  return getConfig();
+}
+
+/**
  * Gera cobrancas da competencia para clientes ativos que ainda nao tem.
  * @param {string} competencia
  * @returns {Promise<{ geradas: number }>}
  */
 async function gerarCobrancas(competencia) {
   const comp = validarCompetencia(competencia);
+  const config = await getConfig();
+
+  if (!config.cobrancaAtiva) {
+    throw new AppError(
+      "A cobranca do Machine Pay esta desativada. Ative-a para gerar cobrancas.",
+      409,
+    );
+  }
 
   const clientes = await prisma.machinePayCliente.findMany({
     where: { status: "ATIVO", cobrancas: { none: { competencia: comp } } },
@@ -861,6 +915,8 @@ async function getEvolucao(meses = 6) {
 }
 
 module.exports = {
+  getConfig,
+  updateConfig,
   listClientes,
   createCliente,
   updateCliente,

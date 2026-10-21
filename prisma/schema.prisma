@@ -374,6 +374,15 @@ model MachinePayAjusteMaquina {
   @@map("machinepay_ajustes_maquinas")
 }
 
+model MachinePayConfig {
+  id            Int      @id @default(1)
+  cobrancaAtiva Boolean  @default(false) @map("cobranca_ativa")
+  updatedBy     String?  @map("updated_by")
+  updatedAt     DateTime @updatedAt
+
+  @@map("machinepay_config")
+}
+
 enum MachinePayTipoMaquina {
   PROPRIA
   PLANO36

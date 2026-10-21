@@ -21,6 +21,10 @@ function handler(fn, status = 200) {
 }
 
 module.exports = {
+  getConfig: handler(() => machinePayService.getConfig()),
+  updateConfig: handler((req) =>
+    machinePayService.updateConfig(req.body, req.user),
+  ),
   listClientes: handler(() => machinePayService.listClientes()),
   createCliente: handler(
     (req) => machinePayService.createCliente(req.body),

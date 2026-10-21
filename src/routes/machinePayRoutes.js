@@ -3,6 +3,9 @@ const machinePayController = require("../controllers/machinePayController");
 
 const router = Router();
 
+router.get("/config", machinePayController.getConfig);
+router.put("/config", machinePayController.updateConfig);
+
 router.get("/clientes", machinePayController.listClientes);
 router.post("/clientes", machinePayController.createCliente);
 router.post("/clientes/importar", machinePayController.importarClientes);
