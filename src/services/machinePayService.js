@@ -1,0 +1,878 @@
+const prisma = require("../config/prisma");
+const AppError = require("../middlewares/appError");
+const movimentacaoService = require("./movimentacaoService");
+
+const STATUS_CLIENTE = ["ATIVO", "SUSPENSO", "INATIVO"];
+const COMPETENCIA_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
+const CAMPO_POR_TIPO_MAQUINA = {
+  PROPRIA: "maquinasProprias",
+  PLANO36: "maquinasPlano36",
+  OFF: "maquinasOff",
+};
+
+/**
+ * Converte Decimal/nullable em numero.
+ * @param {import("@prisma/client").Prisma.Decimal | null | undefined} value
+ * @returns {number | null}
+ */
+function decimalToNumber(value) {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  return Number(value.toString());
+}
+
+/**
+ * Converte entrada numerica opcional (aceita "40,50").
+ * @param {unknown} value
+ * @param {number | null} fallback
+ * @returns {number | null}
+ */
+function parseNumero(value, fallback = null) {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  const numero = Number(String(value).replace(",", "."));
+
+  if (Number.isNaN(numero) || numero < 0) {
+    throw new AppError(`Valor numerico invalido: ${value}`, 400);
+  }
+
+  return numero;
+}
+
+/**
+ * Valida competencia no formato YYYY-MM.
+ * @param {string} competencia
+ * @returns {string}
+ */
+function validarCompetencia(competencia) {
+  if (!competencia || !COMPETENCIA_REGEX.test(String(competencia))) {
+    throw new AppError("Competencia invalida. Use o formato AAAA-MM.", 400);
+  }
+
+  return String(competencia);
+}
+
+/**
+ * Calcula o valor mensal de um cliente (valor fixo tem prioridade).
+ * @param {object} cliente
+ * @returns {number}
+ */
+function calcularValorCliente(cliente) {
+  const valorFixo = decimalToNumber(cliente.valorFixo);
+
+  if (valorFixo !== null) {
+    return valorFixo;
+  }
+
+  const proprias = Number(cliente.maquinasProprias || 0);
+  const plano36 = Number(cliente.maquinasPlano36 || 0);
+  const valor = decimalToNumber(cliente.valorMensalidade) || 0;
+  const valor36 = decimalToNumber(cliente.valorMensalidade36) || 0;
+
+  return Math.round((proprias * valor + plano36 * valor36) * 100) / 100;
+}
+
+/**
+ * Monta a data de vencimento da competencia respeitando o ultimo dia do mes.
+ * Usa meio-dia UTC para evitar troca de dia por fuso.
+ * @param {string} competencia
+ * @param {number} diaVencimento
+ * @returns {Date}
+ */
+function montarVencimento(competencia, diaVencimento) {
+  const [ano, mes] = competencia.split("-").map(Number);
+  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const dia = Math.min(Math.max(Number(diaVencimento) || 10, 1), ultimoDia);
+
+  return new Date(Date.UTC(ano, mes - 1, dia, 12));
+}
+
+/**
+ * Data de hoje (meio-dia UTC) para comparar com vencimentos.
+ * @returns {Date}
+ */
+function hojeUtc() {
+  const agora = new Date();
+  return new Date(
+    Date.UTC(agora.getFullYear(), agora.getMonth(), agora.getDate(), 12),
+  );
+}
+
+/**
+ * Normaliza cliente para resposta da API.
+ * @param {object} cliente
+ * @returns {object}
+ */
+function normalizeCliente(cliente) {
+  const { cobrancas, ajustesMaquinas, ...dados } = cliente;
+  return {
+    ...dados,
+    valorMensalidade: decimalToNumber(cliente.valorMensalidade),
+    valorMensalidade36: decimalToNumber(cliente.valorMensalidade36),
+    valorFixo: decimalToNumber(cliente.valorFixo),
+    totalMaquinas:
+      Number(cliente.maquinasProprias || 0) +
+      Number(cliente.maquinasPlano36 || 0),
+    valorCalculado: calcularValorCliente(cliente),
+  };
+}
+
+/**
+ * Normaliza cobranca e calcula a situacao (ATRASADO e derivado do vencimento).
+ * @param {object} cobranca
+ * @returns {object}
+ */
+function normalizeCobranca(cobranca) {
+  let situacao = cobranca.status;
+
+  if (cobranca.status === "PENDENTE" && cobranca.vencimento < hojeUtc()) {
+    situacao = "ATRASADO";
+  }
+
+  return {
+    ...cobranca,
+    valorMensalidade: decimalToNumber(cobranca.valorMensalidade),
+    valorMensalidade36: decimalToNumber(cobranca.valorMensalidade36),
+    valor: decimalToNumber(cobranca.valor),
+    valorPago: decimalToNumber(cobranca.valorPago),
+    situacao,
+    cliente: cobranca.cliente ? normalizeCliente(cobranca.cliente) : undefined,
+  };
+}
+
+/**
+ * Converte payload de cliente para dados do Prisma.
+ * @param {object} payload
+ * @param {boolean} parcial
+ * @returns {object}
+ */
+function mapClientePayload(payload, parcial = false) {
+  const data = {};
+
+  if (!parcial || payload.nome !== undefined) {
+    const nome = String(payload.nome || "").trim();
+    if (!nome) {
+      throw new AppError("Nome do cliente e obrigatorio.", 400);
+    }
+    data.nome = nome;
+  }
+
+  for (const campo of ["documento", "telefone", "email", "observacoes"]) {
+    if (payload[campo] !== undefined) {
+      data[campo] = payload[campo] ? String(payload[campo]).trim() : null;
+    }
+  }
+
+  if (payload.diaVencimento !== undefined) {
+    const dia = Number(payload.diaVencimento);
+    if (!Number.isInteger(dia) || dia < 1 || dia > 31) {
+      throw new AppError("Dia de vencimento deve estar entre 1 e 31.", 400);
+    }
+    data.diaVencimento = dia;
+  }
+
+  for (const campo of ["maquinasProprias", "maquinasPlano36", "maquinasOff"]) {
+    if (payload[campo] !== undefined) {
+      data[campo] = Math.trunc(parseNumero(payload[campo], 0));
+    }
+  }
+
+  for (const campo of ["valorMensalidade", "valorMensalidade36"]) {
+    if (payload[campo] !== undefined) {
+      data[campo] = parseNumero(payload[campo], 0);
+    }
+  }
+
+  if (payload.valorFixo !== undefined) {
+    data.valorFixo = parseNumero(payload.valorFixo, null);
+  }
+
+  if (payload.status !== undefined) {
+    if (!STATUS_CLIENTE.includes(payload.status)) {
+      throw new AppError("Status de cliente invalido.", 400);
+    }
+    data.status = payload.status;
+  }
+
+  return data;
+}
+
+/**
+ * Diferenca em dias inteiros entre duas datas.
+ * @param {Date} inicio
+ * @param {Date} fim
+ * @returns {number}
+ */
+function diasEntre(inicio, fim) {
+  return Math.max(0, Math.floor((fim - inicio) / 86400000));
+}
+
+/**
+ * Calcula a situacao financeira do cliente a partir das cobrancas.
+ * @param {Array<object>} cobrancas
+ * @returns {object}
+ */
+function calcularFinanceiroCliente(cobrancas = []) {
+  const hoje = hojeUtc();
+  let ultimoPagamento = null;
+  let valorEmAberto = 0;
+  let valorAtrasado = 0;
+  let cobrancasAtrasadas = 0;
+  let vencimentoMaisAntigo = null;
+
+  for (const cobranca of cobrancas) {
+    if (cobranca.status === "PAGO" && cobranca.pagoEm) {
+      if (!ultimoPagamento || cobranca.pagoEm > ultimoPagamento) {
+        ultimoPagamento = cobranca.pagoEm;
+      }
+    }
+
+    if (cobranca.status === "PENDENTE") {
+      const valor = decimalToNumber(cobranca.valor) || 0;
+      valorEmAberto += valor;
+
+      if (cobranca.vencimento < hoje) {
+        valorAtrasado += valor;
+        cobrancasAtrasadas += 1;
+        if (
+          !vencimentoMaisAntigo ||
+          cobranca.vencimento < vencimentoMaisAntigo
+        ) {
+          vencimentoMaisAntigo = cobranca.vencimento;
+        }
+      }
+    }
+  }
+
+  return {
+    ultimoPagamento,
+    diasDesdeUltimoPagamento: ultimoPagamento
+      ? diasEntre(ultimoPagamento, hoje)
+      : null,
+    diasEmAtraso: vencimentoMaisAntigo
+      ? diasEntre(vencimentoMaisAntigo, hoje)
+      : 0,
+    valorEmAberto: Math.round(valorEmAberto * 100) / 100,
+    valorAtrasado: Math.round(valorAtrasado * 100) / 100,
+    cobrancasAtrasadas,
+  };
+}
+
+/**
+ * Lista clientes Machine Pay com a situacao financeira de cada um.
+ * @returns {Promise<Array<object>>}
+ */
+async function listClientes() {
+  const clientes = await prisma.machinePayCliente.findMany({
+    orderBy: { nome: "asc" },
+    include: {
+      cobrancas: {
+        where: { status: { in: ["PAGO", "PENDENTE"] } },
+        select: { status: true, valor: true, vencimento: true, pagoEm: true },
+      },
+    },
+  });
+
+  return clientes.map((cliente) => ({
+    ...normalizeCliente(cliente),
+    ...calcularFinanceiroCliente(cliente.cobrancas),
+  }));
+}
+
+/**
+ * Cria cliente.
+ * @param {object} payload
+ * @returns {Promise<object>}
+ */
+async function createCliente(payload) {
+  const cliente = await prisma.machinePayCliente.create({
+    data: mapClientePayload(payload),
+  });
+
+  return normalizeCliente(cliente);
+}
+
+/**
+ * Atualiza cliente.
+ * @param {number|string} id
+ * @param {object} payload
+ * @returns {Promise<object>}
+ */
+async function updateCliente(id, payload, user) {
+  const atual = await getClienteOrFail(id);
+  const data = mapClientePayload(payload, true);
+  const ajustes = Object.entries(CAMPO_POR_TIPO_MAQUINA)
+    .filter(
+      ([, campo]) => data[campo] !== undefined && data[campo] !== atual[campo],
+    )
+    .map(([tipo, campo]) => ({
+      clienteId: atual.id,
+      tipo,
+      quantidade: data[campo] - atual[campo],
+      motivo: "Edicao do cadastro",
+      usuario: user?.email || null,
+    }));
+
+  const [cliente] = await prisma.$transaction([
+    prisma.machinePayCliente.update({ where: { id: atual.id }, data }),
+    prisma.machinePayAjusteMaquina.createMany({ data: ajustes }),
+  ]);
+
+  return normalizeCliente(cliente);
+}
+
+/**
+ * Adiciona ou remove maquinas do cliente, registrando no historico.
+ * Com aplicarNaCompetencia, recalcula a cobranca pendente daquele mes.
+ * @param {number|string} id
+ * @param {{ tipo: string, quantidade: number, motivo?: string, aplicarNaCompetencia?: string }} payload
+ * @param {object} user
+ * @returns {Promise<object>}
+ */
+async function ajustarMaquinas(id, payload = {}, user) {
+  const atual = await getClienteOrFail(id);
+  const campo = CAMPO_POR_TIPO_MAQUINA[payload.tipo];
+  const quantidade = Math.trunc(Number(payload.quantidade));
+
+  if (!campo) {
+    throw new AppError("Tipo de maquina invalido.", 400);
+  }
+
+  if (!quantidade) {
+    throw new AppError("Informe a quantidade a adicionar ou remover.", 400);
+  }
+
+  const novoTotal = atual[campo] + quantidade;
+  if (novoTotal < 0) {
+    throw new AppError(
+      `O cliente possui apenas ${atual[campo]} maquina(s) desse tipo.`,
+      400,
+    );
+  }
+
+  const cliente = await prisma.$transaction(async (tx) => {
+    const atualizado = await tx.machinePayCliente.update({
+      where: { id: atual.id },
+      data: { [campo]: novoTotal },
+    });
+
+    await tx.machinePayAjusteMaquina.create({
+      data: {
+        clienteId: atual.id,
+        tipo: payload.tipo,
+        quantidade,
+        motivo: payload.motivo ? String(payload.motivo).trim() : null,
+        usuario: user?.email || null,
+      },
+    });
+
+    if (payload.aplicarNaCompetencia && payload.tipo !== "OFF") {
+      const competencia = validarCompetencia(payload.aplicarNaCompetencia);
+      const cobranca = await tx.machinePayCobranca.findUnique({
+        where: {
+          clienteId_competencia: { clienteId: atual.id, competencia },
+        },
+      });
+
+      if (cobranca && cobranca.status === "PENDENTE") {
+        await tx.machinePayCobranca.update({
+          where: { id: cobranca.id },
+          data: {
+            maquinasProprias: atualizado.maquinasProprias,
+            maquinasPlano36: atualizado.maquinasPlano36,
+            valorMensalidade: atualizado.valorMensalidade,
+            valorMensalidade36: atualizado.valorMensalidade36,
+            valor: calcularValorCliente(atualizado),
+          },
+        });
+      }
+    }
+
+    return atualizado;
+  });
+
+  return normalizeCliente(cliente);
+}
+
+/**
+ * Remove cliente e suas cobrancas.
+ * @param {number|string} id
+ */
+async function deleteCliente(id) {
+  await getClienteOrFail(id);
+
+  const comLancamento = await prisma.machinePayCobranca.count({
+    where: { clienteId: Number(id), movimentacaoId: { not: null } },
+  });
+
+  if (comLancamento) {
+    throw new AppError(
+      "Cliente possui pagamentos lancados no financeiro. Estorne-os ou marque o cliente como inativo.",
+      409,
+    );
+  }
+
+  await prisma.machinePayCliente.delete({ where: { id: Number(id) } });
+}
+
+/**
+ * Busca cliente ou dispara 404.
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+async function getClienteOrFail(id) {
+  const cliente = await prisma.machinePayCliente.findUnique({
+    where: { id: Number(id) },
+  });
+
+  if (!cliente) {
+    throw new AppError("Cliente Machine Pay nao encontrado.", 404);
+  }
+
+  return cliente;
+}
+
+/**
+ * Historico de cobrancas de um cliente.
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+async function getHistoricoCliente(id) {
+  const cliente = await getClienteOrFail(id);
+  const [cobrancas, ajustes] = await Promise.all([
+    prisma.machinePayCobranca.findMany({
+      where: { clienteId: Number(id) },
+      orderBy: { competencia: "desc" },
+    }),
+    prisma.machinePayAjusteMaquina.findMany({
+      where: { clienteId: Number(id) },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    }),
+  ]);
+
+  return {
+    cliente: {
+      ...normalizeCliente(cliente),
+      ...calcularFinanceiroCliente(cobrancas),
+    },
+    cobrancas: cobrancas.map(normalizeCobranca),
+    ajustes,
+  };
+}
+
+/**
+ * Importa clientes em lote (atualiza quando o nome ja existe).
+ * @param {Array<object>} itens
+ * @returns {Promise<{ criados: number, atualizados: number }>}
+ */
+async function importarClientes(itens) {
+  if (!Array.isArray(itens) || !itens.length) {
+    throw new AppError("Nenhum cliente para importar.", 400);
+  }
+
+  const existentes = await prisma.machinePayCliente.findMany({
+    select: { id: true, nome: true },
+  });
+  const porNome = new Map(
+    existentes.map((item) => [item.nome.trim().toLowerCase(), item.id]),
+  );
+
+  let criados = 0;
+  let atualizados = 0;
+
+  await prisma.$transaction(async (tx) => {
+    for (const item of itens) {
+      const data = mapClientePayload(item);
+      const idExistente = porNome.get(data.nome.toLowerCase());
+
+      if (idExistente) {
+        await tx.machinePayCliente.update({
+          where: { id: idExistente },
+          data,
+        });
+        atualizados += 1;
+      } else {
+        const criado = await tx.machinePayCliente.create({ data });
+        porNome.set(data.nome.toLowerCase(), criado.id);
+        criados += 1;
+      }
+    }
+  });
+
+  return { criados, atualizados };
+}
+
+/**
+ * Resume uma lista de cobrancas normalizadas.
+ * @param {Array<object>} cobrancas
+ * @returns {object}
+ */
+function resumirCobrancas(cobrancas) {
+  const resumo = {
+    quantidade: 0,
+    previsto: 0,
+    recebido: 0,
+    emAberto: 0,
+    atrasado: 0,
+    qtdPagas: 0,
+    qtdPendentes: 0,
+    qtdAtrasadas: 0,
+    maquinas: 0,
+  };
+
+  for (const cobranca of cobrancas) {
+    if (cobranca.status === "CANCELADO") {
+      continue;
+    }
+
+    resumo.quantidade += 1;
+    resumo.previsto += cobranca.valor;
+    resumo.maquinas += cobranca.maquinasProprias + cobranca.maquinasPlano36;
+
+    if (cobranca.status === "PAGO") {
+      resumo.recebido += cobranca.valorPago ?? cobranca.valor;
+      resumo.qtdPagas += 1;
+    } else {
+      resumo.emAberto += cobranca.valor;
+      resumo.qtdPendentes += 1;
+      if (cobranca.situacao === "ATRASADO") {
+        resumo.atrasado += cobranca.valor;
+        resumo.qtdAtrasadas += 1;
+      }
+    }
+  }
+
+  for (const chave of ["previsto", "recebido", "emAberto", "atrasado"]) {
+    resumo[chave] = Math.round(resumo[chave] * 100) / 100;
+  }
+
+  return resumo;
+}
+
+/**
+ * Lista cobrancas de uma competencia com resumo.
+ * @param {string} competencia
+ * @returns {Promise<object>}
+ */
+async function getCompetencia(competencia) {
+  const comp = validarCompetencia(competencia);
+
+  const [cobrancas, clientesAtivos] = await Promise.all([
+    prisma.machinePayCobranca.findMany({
+      where: { competencia: comp },
+      include: { cliente: true },
+      orderBy: [{ vencimento: "asc" }, { cliente: { nome: "asc" } }],
+    }),
+    prisma.machinePayCliente.findMany({
+      where: { status: "ATIVO" },
+      select: { id: true },
+    }),
+  ]);
+
+  const normalizadas = cobrancas.map(normalizeCobranca);
+  const comCobranca = new Set(normalizadas.map((item) => item.clienteId));
+
+  return {
+    competencia: comp,
+    cobrancas: normalizadas,
+    resumo: resumirCobrancas(normalizadas),
+    clientesSemCobranca: clientesAtivos.filter(
+      (item) => !comCobranca.has(item.id),
+    ).length,
+  };
+}
+
+/**
+ * Gera cobrancas da competencia para clientes ativos que ainda nao tem.
+ * @param {string} competencia
+ * @returns {Promise<{ geradas: number }>}
+ */
+async function gerarCobrancas(competencia) {
+  const comp = validarCompetencia(competencia);
+
+  const clientes = await prisma.machinePayCliente.findMany({
+    where: { status: "ATIVO", cobrancas: { none: { competencia: comp } } },
+  });
+
+  const data = clientes
+    .map((cliente) => ({
+      clienteId: cliente.id,
+      competencia: comp,
+      vencimento: montarVencimento(comp, cliente.diaVencimento),
+      maquinasProprias: cliente.maquinasProprias,
+      maquinasPlano36: cliente.maquinasPlano36,
+      valorMensalidade: cliente.valorMensalidade,
+      valorMensalidade36: cliente.valorMensalidade36,
+      valor: calcularValorCliente(cliente),
+    }))
+    .filter((item) => item.valor > 0);
+
+  const resultado = await prisma.machinePayCobranca.createMany({
+    data,
+    skipDuplicates: true,
+  });
+
+  return { geradas: resultado.count };
+}
+
+/**
+ * Busca cobranca ou dispara 404.
+ * @param {number|string} id
+ * @returns {Promise<object>}
+ */
+async function getCobrancaOrFail(id) {
+  const cobranca = await prisma.machinePayCobranca.findUnique({
+    where: { id: Number(id) },
+  });
+
+  if (!cobranca) {
+    throw new AppError("Cobranca nao encontrada.", 404);
+  }
+
+  return cobranca;
+}
+
+/**
+ * Ajusta valor, vencimento ou observacoes de uma cobranca.
+ * @param {number|string} id
+ * @param {object} payload
+ * @returns {Promise<object>}
+ */
+async function updateCobranca(id, payload) {
+  await getCobrancaOrFail(id);
+  const data = {};
+
+  if (payload.valor !== undefined) {
+    data.valor = parseNumero(payload.valor, 0);
+  }
+
+  if (payload.vencimento) {
+    const vencimento = new Date(`${String(payload.vencimento).slice(0, 10)}T12:00:00Z`);
+    if (Number.isNaN(vencimento.getTime())) {
+      throw new AppError("Data de vencimento invalida.", 400);
+    }
+    data.vencimento = vencimento;
+  }
+
+  if (payload.observacoes !== undefined) {
+    data.observacoes = payload.observacoes || null;
+  }
+
+  const cobranca = await prisma.machinePayCobranca.update({
+    where: { id: Number(id) },
+    data,
+    include: { cliente: true },
+  });
+
+  return normalizeCobranca(cobranca);
+}
+
+/**
+ * Busca a empresa Machine Pay usada nos lancamentos financeiros.
+ * @param {object} client
+ * @returns {Promise<object>}
+ */
+async function getEmpresaMachinePay(client = prisma) {
+  const empresa = await client.empresa.findFirst({
+    where: { nome: { equals: "MachinePay", mode: "insensitive" } },
+  });
+
+  if (!empresa) {
+    throw new AppError("Empresa MachinePay nao cadastrada.", 404);
+  }
+
+  return empresa;
+}
+
+/**
+ * Remove o lancamento financeiro vinculado (estornando o saldo).
+ * @param {object} tx
+ * @param {object} cobranca
+ */
+async function removerLancamentoVinculado(tx, cobranca) {
+  if (!cobranca.movimentacaoId) {
+    return;
+  }
+
+  const existe = await tx.movimentacao.findUnique({
+    where: { id: cobranca.movimentacaoId },
+    select: { id: true },
+  });
+
+  if (existe) {
+    await movimentacaoService.deleteMovimentacao(cobranca.movimentacaoId, {
+      tx,
+    });
+  }
+}
+
+/**
+ * Registra pagamento de uma cobranca. Com contaDestinoId, lanca a entrada
+ * no financeiro (MachinePay) e atualiza o saldo da conta.
+ * @param {number|string} id
+ * @param {object} payload
+ * @param {object} user
+ * @returns {Promise<object>}
+ */
+async function pagarCobranca(id, payload = {}, user) {
+  const atual = await prisma.machinePayCobranca.findUnique({
+    where: { id: Number(id) },
+    include: { cliente: true },
+  });
+
+  if (!atual) {
+    throw new AppError("Cobranca nao encontrada.", 404);
+  }
+
+  const pagoEm = payload.pagoEm
+    ? new Date(`${String(payload.pagoEm).slice(0, 10)}T12:00:00Z`)
+    : hojeUtc();
+
+  if (Number.isNaN(pagoEm.getTime())) {
+    throw new AppError("Data de pagamento invalida.", 400);
+  }
+
+  const valorPago = parseNumero(payload.valorPago, decimalToNumber(atual.valor));
+
+  if (!valorPago) {
+    throw new AppError("Valor pago deve ser maior que zero.", 400);
+  }
+
+  const cobranca = await prisma.$transaction(async (tx) => {
+    await removerLancamentoVinculado(tx, atual);
+
+    let movimentacaoId = null;
+
+    if (payload.contaDestinoId) {
+      const empresa = await getEmpresaMachinePay(tx);
+      const movimentacao = await movimentacaoService.createMovimentacao(
+        {
+          empresaId: empresa.id,
+          tipo: "ENTRADA",
+          status: "REALIZADO",
+          categoria: "SISTEMA",
+          valor: valorPago,
+          data: pagoEm.toISOString(),
+          contaDestinoId: Number(payload.contaDestinoId),
+          referencia: `Machine Pay ${atual.competencia} - ${atual.cliente.nome}`,
+        },
+        { tx, user },
+      );
+      movimentacaoId = movimentacao.id;
+    }
+
+    return tx.machinePayCobranca.update({
+      where: { id: Number(id) },
+      data: {
+        status: "PAGO",
+        pagoEm,
+        valorPago,
+        formaPagamento: payload.formaPagamento || null,
+        movimentacaoId,
+      },
+      include: { cliente: true },
+    });
+  });
+
+  return normalizeCobranca(cobranca);
+}
+
+/**
+ * Altera status da cobranca sem pagamento (estornar ou cancelar),
+ * removendo o lancamento financeiro vinculado.
+ * @param {number|string} id
+ * @param {"PENDENTE"|"CANCELADO"} status
+ * @returns {Promise<object>}
+ */
+async function alterarStatusCobranca(id, status) {
+  const atual = await getCobrancaOrFail(id);
+
+  const cobranca = await prisma.$transaction(async (tx) => {
+    await removerLancamentoVinculado(tx, atual);
+
+    return tx.machinePayCobranca.update({
+      where: { id: Number(id) },
+      data: {
+        status,
+        pagoEm: null,
+        valorPago: null,
+        formaPagamento: null,
+        movimentacaoId: null,
+      },
+      include: { cliente: true },
+    });
+  });
+
+  return normalizeCobranca(cobranca);
+}
+
+/**
+ * Remove uma cobranca.
+ * @param {number|string} id
+ */
+async function deleteCobranca(id) {
+  const atual = await getCobrancaOrFail(id);
+
+  await prisma.$transaction(async (tx) => {
+    await removerLancamentoVinculado(tx, atual);
+    await tx.machinePayCobranca.delete({ where: { id: Number(id) } });
+  });
+}
+
+/**
+ * Evolucao previsto x recebido das ultimas competencias.
+ * @param {number} meses
+ * @returns {Promise<Array<object>>}
+ */
+async function getEvolucao(meses = 6) {
+  const cobrancas = await prisma.machinePayCobranca.findMany({
+    where: { status: { not: "CANCELADO" } },
+    select: {
+      competencia: true,
+      status: true,
+      valor: true,
+      valorPago: true,
+      vencimento: true,
+      maquinasProprias: true,
+      maquinasPlano36: true,
+    },
+  });
+
+  const porCompetencia = new Map();
+  for (const item of cobrancas.map(normalizeCobranca)) {
+    if (!porCompetencia.has(item.competencia)) {
+      porCompetencia.set(item.competencia, []);
+    }
+    porCompetencia.get(item.competencia).push(item);
+  }
+
+  return [...porCompetencia.keys()]
+    .sort()
+    .slice(-Math.max(1, Number(meses) || 6))
+    .map((competencia) => ({
+      competencia,
+      ...resumirCobrancas(porCompetencia.get(competencia)),
+    }));
+}
+
+module.exports = {
+  listClientes,
+  createCliente,
+  updateCliente,
+  ajustarMaquinas,
+  deleteCliente,
+  getHistoricoCliente,
+  importarClientes,
+  getCompetencia,
+  gerarCobrancas,
+  updateCobranca,
+  pagarCobranca,
+  alterarStatusCobranca,
+  deleteCobranca,
+  getEvolucao,
+};

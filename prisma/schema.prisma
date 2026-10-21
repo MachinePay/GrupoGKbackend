@@ -310,3 +310,84 @@ enum SaasLancamentoTipo {
   MENSALIDADE
   PAGAMENTO
 }
+
+model MachinePayCliente {
+  id                 Int                       @id @default(autoincrement())
+  nome               String
+  documento          String?
+  telefone           String?
+  email              String?
+  diaVencimento      Int                       @default(10) @map("dia_vencimento")
+  maquinasProprias   Int                       @default(0) @map("maquinas_proprias")
+  maquinasPlano36    Int                       @default(0) @map("maquinas_plano36")
+  maquinasOff        Int                       @default(0) @map("maquinas_off")
+  valorMensalidade   Decimal                   @default(40) @map("valor_mensalidade") @db.Decimal(14, 2)
+  valorMensalidade36 Decimal                   @default(0) @map("valor_mensalidade36") @db.Decimal(14, 2)
+  valorFixo          Decimal?                  @map("valor_fixo") @db.Decimal(14, 2)
+  status             MachinePayStatusCliente   @default(ATIVO)
+  observacoes        String?
+  cobrancas          MachinePayCobranca[]
+  ajustesMaquinas    MachinePayAjusteMaquina[]
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  @@index([status])
+  @@map("machinepay_clientes")
+}
+
+model MachinePayCobranca {
+  id                 Int                      @id @default(autoincrement())
+  clienteId          Int                      @map("cliente_id")
+  cliente            MachinePayCliente        @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  competencia        String
+  vencimento         DateTime
+  maquinasProprias   Int                      @default(0) @map("maquinas_proprias")
+  maquinasPlano36    Int                      @default(0) @map("maquinas_plano36")
+  valorMensalidade   Decimal                  @default(0) @map("valor_mensalidade") @db.Decimal(14, 2)
+  valorMensalidade36 Decimal                  @default(0) @map("valor_mensalidade36") @db.Decimal(14, 2)
+  valor              Decimal                  @db.Decimal(14, 2)
+  status             MachinePayStatusCobranca @default(PENDENTE)
+  valorPago          Decimal?                 @map("valor_pago") @db.Decimal(14, 2)
+  pagoEm             DateTime?                @map("pago_em")
+  formaPagamento     String?                  @map("forma_pagamento")
+  movimentacaoId     Int?                     @map("movimentacao_id")
+  observacoes        String?
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+
+  @@unique([clienteId, competencia])
+  @@index([competencia, status])
+  @@map("machinepay_cobrancas")
+}
+
+model MachinePayAjusteMaquina {
+  id         Int                   @id @default(autoincrement())
+  clienteId  Int                   @map("cliente_id")
+  cliente    MachinePayCliente     @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  tipo       MachinePayTipoMaquina
+  quantidade Int
+  motivo     String?
+  usuario    String?
+  createdAt  DateTime              @default(now())
+
+  @@index([clienteId, createdAt])
+  @@map("machinepay_ajustes_maquinas")
+}
+
+enum MachinePayTipoMaquina {
+  PROPRIA
+  PLANO36
+  OFF
+}
+
+enum MachinePayStatusCliente {
+  ATIVO
+  SUSPENSO
+  INATIVO
+}
+
+enum MachinePayStatusCobranca {
+  PENDENTE
+  PAGO
+  CANCELADO
+}

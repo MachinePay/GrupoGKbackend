@@ -6,6 +6,7 @@ const cotacoesRoutes = require("./cotacoesRoutes");
 const dashboardRoutes = require("./dashboardRoutes");
 const movimentacaoRoutes = require("./movimentacaoRoutes");
 const integracaoRoutes = require("./integracaoRoutes");
+const machinePayRoutes = require("./machinePayRoutes");
 const relatoriosRoutes = require("./relatoriosRoutes");
 const fornecedoresRoutes = require("./fornecedoresRoutes");
 const selfMachineRoutes = require("./selfMachineRoutes");
@@ -30,6 +31,7 @@ router.use("/cadastros", cadastroRoutes);
 router.use("/integracao", integracaoRoutes);
 router.use("/fornecedores", fornecedoresRoutes);
 router.use("/selfmachine", selfMachineRoutes);
+router.use("/machinepay", machinePayRoutes);
 router.use("/cotacoes", cotacoesRoutes);
 
 module.exports = router;
