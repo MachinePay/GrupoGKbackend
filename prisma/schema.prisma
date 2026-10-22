@@ -445,6 +445,21 @@ model MachinePaySumupConfig {
   @@map("machinepay_sumup_config")
 }
 
+// Contas SumUp do grupo: cada uma com a sua API key, para ver e esquecer as
+// maquininhas pareadas na Cloud API daquela conta.
+model SumupConta {
+  id           Int      @id @default(autoincrement())
+  nome         String
+  apiKey       String   @map("api_key")
+  merchantCode String?  @map("merchant_code")
+  nomeConta    String?  @map("nome_conta")
+  updatedBy    String?  @map("updated_by")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("sumup_contas")
+}
+
 model MachinePayWhatsappConfig {
   id                Int      @id @default(1)
   ativo             Boolean  @default(false)

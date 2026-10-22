@@ -628,6 +628,9 @@ function iniciarConferenciaAutomatica() {
 }
 
 module.exports = {
+  chamarSumup,
+  lerConta,
+  mascararChave,
   getConfig,
   updateConfig,
   testarConexao,

@@ -11,6 +11,7 @@ const machinePayController = require("../controllers/machinePayController");
 const relatoriosRoutes = require("./relatoriosRoutes");
 const fornecedoresRoutes = require("./fornecedoresRoutes");
 const selfMachineRoutes = require("./selfMachineRoutes");
+const sumupContasRoutes = require("./sumupContasRoutes");
 const usuarioRoutes = require("./usuarioRoutes");
 const { authenticate } = require("../middlewares/authMiddleware");
 
@@ -36,5 +37,6 @@ router.use("/fornecedores", fornecedoresRoutes);
 router.use("/selfmachine", selfMachineRoutes);
 router.use("/machinepay", machinePayRoutes);
 router.use("/cotacoes", cotacoesRoutes);
+router.use("/sumup-contas", sumupContasRoutes);
 
 module.exports = router;
