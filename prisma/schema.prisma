@@ -324,15 +324,37 @@ model MachinePayCliente {
   valorMensalidade   Decimal                   @default(40) @map("valor_mensalidade") @db.Decimal(14, 2)
   valorMensalidade36 Decimal                   @default(0) @map("valor_mensalidade36") @db.Decimal(14, 2)
   valorFixo          Decimal?                  @map("valor_fixo") @db.Decimal(14, 2)
+  maquinasOnInativas Int                       @default(0) @map("maquinas_on_inativas")
   status             MachinePayStatusCliente   @default(ATIVO)
   observacoes        String?
+  painelUsrId        String?                   @unique @map("painel_usr_id")
+  painelSincronizadoEm DateTime?               @map("painel_sincronizado_em")
   cobrancas          MachinePayCobranca[]
   ajustesMaquinas    MachinePayAjusteMaquina[]
+  maquinas           MachinePayMaquina[]
   createdAt          DateTime                  @default(now())
   updatedAt          DateTime                  @updatedAt
 
   @@index([status])
   @@map("machinepay_clientes")
+}
+
+model MachinePayMaquina {
+  id            Int               @id @default(autoincrement())
+  clienteId     Int               @map("cliente_id")
+  cliente       MachinePayCliente @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  posId         String            @unique @map("pos_id")
+  idPainel      String?           @map("id_painel")
+  nome          String?
+  ligada        Boolean           @default(true)
+  online        Boolean?
+  ultimaVendaEm DateTime?         @map("ultima_venda_em")
+  inativa       Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([clienteId])
+  @@map("machinepay_maquinas")
 }
 
 model MachinePayCobranca {

@@ -443,7 +443,7 @@ async function getClienteOrFail(id) {
  */
 async function getHistoricoCliente(id) {
   const cliente = await getClienteOrFail(id);
-  const [cobrancas, ajustes] = await Promise.all([
+  const [cobrancas, ajustes, maquinas] = await Promise.all([
     prisma.machinePayCobranca.findMany({
       where: { clienteId: Number(id) },
       orderBy: { competencia: "desc" },
@@ -452,6 +452,10 @@ async function getHistoricoCliente(id) {
       where: { clienteId: Number(id) },
       orderBy: { createdAt: "desc" },
       take: 100,
+    }),
+    prisma.machinePayMaquina.findMany({
+      where: { clienteId: Number(id) },
+      orderBy: [{ ligada: "desc" }, { inativa: "desc" }, { nome: "asc" }],
     }),
   ]);
 
@@ -462,6 +466,7 @@ async function getHistoricoCliente(id) {
     },
     cobrancas: cobrancas.map(normalizeCobranca),
     ajustes,
+    maquinas,
   };
 }
 

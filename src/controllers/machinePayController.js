@@ -1,4 +1,5 @@
 const machinePayService = require("../services/machinePayService");
+const machinePayPainelService = require("../services/machinePayPainelService");
 
 /**
  * Cria handler Express padrao para o service.
@@ -46,6 +47,17 @@ module.exports = {
     (req) => machinePayService.importarClientes(req.body?.clientes),
     201,
   ),
+  getStatusPainel: handler(() =>
+    machinePayPainelService.getStatusSincronizacao(),
+  ),
+  // A leitura completa do painel leva alguns minutos: dispara em segundo
+  // plano e a tela acompanha por GET /painel/status.
+  sincronizarPainel: handler(async () => {
+    machinePayPainelService
+      .sincronizarPainel({ origem: "manual" })
+      .catch((error) => console.error("[machinepay] sync manual falhou:", error.message));
+    return machinePayPainelService.getStatusSincronizacao();
+  }, 202),
   getCompetencia: handler((req) =>
     machinePayService.getCompetencia(req.query.competencia),
   ),

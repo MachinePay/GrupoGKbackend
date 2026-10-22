@@ -6,6 +6,9 @@ const router = Router();
 router.get("/config", machinePayController.getConfig);
 router.put("/config", machinePayController.updateConfig);
 
+router.get("/painel/status", machinePayController.getStatusPainel);
+router.post("/painel/sincronizar", machinePayController.sincronizarPainel);
+
 router.get("/clientes", machinePayController.listClientes);
 router.post("/clientes", machinePayController.createCliente);
 router.post("/clientes/importar", machinePayController.importarClientes);
