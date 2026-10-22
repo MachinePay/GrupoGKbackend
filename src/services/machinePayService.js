@@ -871,6 +871,13 @@ async function alterarStatusCobranca(id, status) {
         valorPago: null,
         formaPagamento: null,
         movimentacaoId: null,
+        // Desvincula o Pix SumUp: um checkout ja pago nao pode dar baixa de novo.
+        sumupCheckoutId: null,
+        sumupReferencia: null,
+        pixCopiaCola: null,
+        pixQrUrl: null,
+        pixGeradoEm: null,
+        pixValidoAte: null,
       },
       include: { cliente: true },
     });

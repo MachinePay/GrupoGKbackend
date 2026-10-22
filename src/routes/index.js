@@ -7,6 +7,7 @@ const dashboardRoutes = require("./dashboardRoutes");
 const movimentacaoRoutes = require("./movimentacaoRoutes");
 const integracaoRoutes = require("./integracaoRoutes");
 const machinePayRoutes = require("./machinePayRoutes");
+const machinePayController = require("../controllers/machinePayController");
 const relatoriosRoutes = require("./relatoriosRoutes");
 const fornecedoresRoutes = require("./fornecedoresRoutes");
 const selfMachineRoutes = require("./selfMachineRoutes");
@@ -20,6 +21,8 @@ router.get("/health", (_req, res) => {
 });
 
 router.use("/auth", authRoutes);
+// Avisos da SumUp (sem login: autenticados pelo token secreto na URL).
+router.post("/webhooks/sumup/:token", machinePayController.webhookSumup);
 router.use(authenticate);
 
 router.use("/usuarios", usuarioRoutes);

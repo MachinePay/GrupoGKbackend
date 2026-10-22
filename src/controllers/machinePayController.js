@@ -1,5 +1,6 @@
 const machinePayService = require("../services/machinePayService");
 const machinePayPainelService = require("../services/machinePayPainelService");
+const sumupService = require("../services/sumupService");
 
 /**
  * Cria handler Express padrao para o service.
@@ -83,4 +84,19 @@ module.exports = {
   getEvolucao: handler((req) =>
     machinePayService.getEvolucao(req.query.meses),
   ),
+  getConfigSumup: handler(() => sumupService.getConfig()),
+  updateConfigSumup: handler((req) =>
+    sumupService.updateConfig(req.body, req.user),
+  ),
+  testarSumup: handler((req) => sumupService.testarConexao(req.user)),
+  gerarPix: handler(
+    (req) => sumupService.gerarPix(req.params.id, { novo: Boolean(req.body?.novo) }),
+    201,
+  ),
+  verificarPix: handler((req) => sumupService.verificarPix(req.params.id)),
+  // Rota publica chamada pela SumUp: responde 200 logo e confere em seguida.
+  webhookSumup: handler(async (req) => {
+    await sumupService.receberWebhook(req.params.token, req.body);
+    return { recebido: true };
+  }),
 };

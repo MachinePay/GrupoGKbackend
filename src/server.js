@@ -1,6 +1,7 @@
 const app = require("./app");
 const env = require("./config/env");
 const machinePayPainelService = require("./services/machinePayPainelService");
+const sumupService = require("./services/sumupService");
 
 /**
  * Inicializa o servidor HTTP da API.
@@ -12,6 +13,7 @@ function startServer() {
   });
 
   machinePayPainelService.iniciarSincronizacaoAutomatica();
+  sumupService.iniciarConferenciaAutomatica();
 }
 
 startServer();

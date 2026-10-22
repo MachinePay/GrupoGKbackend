@@ -378,6 +378,12 @@ model MachinePayCobranca {
   formaPagamento     String?                  @map("forma_pagamento")
   movimentacaoId     Int?                     @map("movimentacao_id")
   observacoes        String?
+  sumupCheckoutId    String?                  @unique @map("sumup_checkout_id")
+  sumupReferencia    String?                  @map("sumup_referencia")
+  pixCopiaCola       String?                  @map("pix_copia_cola")
+  pixQrUrl           String?                  @map("pix_qr_url")
+  pixGeradoEm        DateTime?                @map("pix_gerado_em")
+  pixValidoAte       DateTime?                @map("pix_valido_ate")
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
@@ -407,6 +413,22 @@ model MachinePayConfig {
   updatedAt     DateTime @updatedAt
 
   @@map("machinepay_config")
+}
+
+model MachinePaySumupConfig {
+  id             Int      @id @default(1)
+  ativo          Boolean  @default(false)
+  apiKey         String?  @map("api_key")
+  merchantCode   String?  @map("merchant_code")
+  tipoPix        String   @default("pix") @map("tipo_pix")
+  validadeHoras  Int      @default(72) @map("validade_horas")
+  contaDestinoId Int?     @map("conta_destino_id")
+  urlPublica     String?  @map("url_publica")
+  webhookToken   String?  @map("webhook_token")
+  updatedBy      String?  @map("updated_by")
+  updatedAt      DateTime @updatedAt
+
+  @@map("machinepay_sumup_config")
 }
 
 enum MachinePayTipoMaquina {

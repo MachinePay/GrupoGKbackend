@@ -1,5 +1,6 @@
 const { Router } = require("express");
 const machinePayController = require("../controllers/machinePayController");
+const { authorize } = require("../middlewares/authMiddleware");
 
 const router = Router();
 
@@ -25,5 +26,12 @@ router.post("/cobrancas/:id/pagar", machinePayController.pagarCobranca);
 router.post("/cobrancas/:id/estornar", machinePayController.estornarCobranca);
 router.post("/cobrancas/:id/cancelar", machinePayController.cancelarCobranca);
 router.delete("/cobrancas/:id", machinePayController.deleteCobranca);
+router.post("/cobrancas/:id/pix", machinePayController.gerarPix);
+router.post("/cobrancas/:id/pix/verificar", machinePayController.verificarPix);
+
+// A chave da API da SumUp so e configurada por administradores.
+router.get("/sumup/config", machinePayController.getConfigSumup);
+router.put("/sumup/config", authorize("ADMIN"), machinePayController.updateConfigSumup);
+router.post("/sumup/testar", authorize("ADMIN"), machinePayController.testarSumup);
 
 module.exports = router;
