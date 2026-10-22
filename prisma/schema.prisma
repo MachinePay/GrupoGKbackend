@@ -324,6 +324,7 @@ model MachinePayCliente {
   valorMensalidade   Decimal                   @default(40) @map("valor_mensalidade") @db.Decimal(14, 2)
   valorMensalidade36 Decimal                   @default(0) @map("valor_mensalidade36") @db.Decimal(14, 2)
   valorFixo          Decimal?                  @map("valor_fixo") @db.Decimal(14, 2)
+  semMensalidade     Boolean                   @default(false) @map("sem_mensalidade")
   maquinasOnInativas Int                       @default(0) @map("maquinas_on_inativas")
   maquinasOnInativas60 Int                     @default(0) @map("maquinas_on_inativas60")
   status             MachinePayStatusCliente   @default(ATIVO)

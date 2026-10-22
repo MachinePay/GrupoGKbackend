@@ -7,17 +7,14 @@ const AppError = require("../middlewares/appError");
 // "Dispositivos Cadastrados" (maquinas.php?acao=maquinas&usr=ID).
 
 const DEFAULT_PAINEL_URL = "https://www.cyberpix.com.br/pix-adesivo-clientes/";
-// Revendas importadas (nome do logo na coluna Revenda, sem acento/caixa),
-// clientes avulsos sem revenda no painel e clientes que nunca entram, pelo ID
-// do cliente. Sobrescreva com MACHINE_PAY_REVENDAS, MACHINE_PAY_CLIENTES_EXTRAS
-// e MACHINE_PAY_CLIENTES_EXCLUIDOS (separados por virgula).
+// Revendas importadas (nome do logo na coluna Revenda, sem acento/caixa) e
+// clientes avulsos sem revenda no painel, pelo ID do cliente. Sobrescreva com
+// MACHINE_PAY_REVENDAS / MACHINE_PAY_CLIENTES_EXTRAS (separados por virgula).
+// Quem nao paga mensalidade fica no cadastro marcado como "sem mensalidade".
 const REVENDAS_PADRAO = ["machine pay", "clube kids", "star toys"];
 const CLIENTES_EXTRAS_PADRAO = [
   "8608594957041174", // Raquel Nazareth De Moura
   "1978392500848855", // Toyland
-];
-const CLIENTES_EXCLUIDOS_PADRAO = [
-  "1073992392451816", // Pj Plush (pedro Cosso), revenda Clube Kids
 ];
 
 function listaDoEnv(nome, padrao) {
@@ -336,13 +333,8 @@ async function lerPainel({ verificarVendas = true } = {}) {
 
   const revendas = new Set(listaDoEnv("MACHINE_PAY_REVENDAS", REVENDAS_PADRAO).map(normalizar));
   const extras = new Set(listaDoEnv("MACHINE_PAY_CLIENTES_EXTRAS", CLIENTES_EXTRAS_PADRAO));
-  const excluidos = new Set(
-    listaDoEnv("MACHINE_PAY_CLIENTES_EXCLUIDOS", CLIENTES_EXCLUIDOS_PADRAO),
-  );
   const daRevenda = todos.filter(
-    (cliente) =>
-      !excluidos.has(cliente.usrId) &&
-      (revendas.has(normalizar(cliente.revenda)) || extras.has(cliente.usrId)),
+    (cliente) => revendas.has(normalizar(cliente.revenda)) || extras.has(cliente.usrId),
   );
   const agora = new Date();
   const leituras = await emLotes(daRevenda, CONCORRENCIA, async (cliente) => {
@@ -419,6 +411,9 @@ function mesclarVendas(maquinas, anteriores, verificarVendas) {
  * as de plano 36 ja cadastradas), OFF viram maquinas off e as ON sem venda nos
  * ultimos 30 dias viram "on inativas". Mudancas de ON/OFF ficam no historico.
  */
+// Precos (mensalidade, plano 36, valor combinado), dia de vencimento e status
+// nunca vem do painel: sao do GK. Cliente novo entra com o padrao do banco
+// (R$ 40 por maquina) e o valor e editado depois no cadastro.
 async function aplicarCliente(existente, cliente, agora, anteriores, verificarVendas) {
   const dadosBase = {
     nome: cliente.nome,

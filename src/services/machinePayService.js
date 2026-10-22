@@ -62,6 +62,11 @@ function validarCompetencia(competencia) {
  * @returns {number}
  */
 function calcularValorCliente(cliente) {
+  // Cliente sem mensalidade fica no cadastro, mas nao gera cobranca.
+  if (cliente.semMensalidade) {
+    return 0;
+  }
+
   const valorFixo = decimalToNumber(cliente.valorFixo);
 
   if (valorFixo !== null) {
@@ -189,6 +194,10 @@ function mapClientePayload(payload, parcial = false) {
 
   if (payload.valorFixo !== undefined) {
     data.valorFixo = parseNumero(payload.valorFixo, null);
+  }
+
+  if (payload.semMensalidade !== undefined) {
+    data.semMensalidade = Boolean(payload.semMensalidade);
   }
 
   if (payload.status !== undefined) {
