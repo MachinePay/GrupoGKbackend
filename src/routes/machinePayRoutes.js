@@ -33,6 +33,7 @@ router.post("/cobrancas/:id/pix/verificar", machinePayController.verificarPix);
 router.get("/sumup/config", machinePayController.getConfigSumup);
 router.put("/sumup/config", authorize("ADMIN"), machinePayController.updateConfigSumup);
 router.post("/sumup/testar", authorize("ADMIN"), machinePayController.testarSumup);
+router.post("/sumup/conferir", authorize("FINANCEIRO"), machinePayController.conferirPixPagos);
 
 // WhatsApp (Evolution API): configurar e conectar o numero so administradores;
 // enviar cobrancas, financeiro e administradores.

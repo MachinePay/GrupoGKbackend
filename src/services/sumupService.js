@@ -299,6 +299,28 @@ function extrairArtefatos(resposta) {
 }
 
 /**
+ * Desativa um checkout na SumUp (o Pix dele deixa de poder ser pago).
+ * Ja expirado ou inexistente conta como desativado.
+ * @param {string} apiKey
+ * @param {string} checkoutId
+ */
+async function desativarCheckout(apiKey, checkoutId) {
+  try {
+    await chamarSumup(apiKey, `/v0.1/checkouts/${encodeURIComponent(checkoutId)}`, {
+      method: "DELETE",
+    });
+  } catch (error) {
+    if (/respondeu (404|409)/.test(error.message)) {
+      return;
+    }
+    throw new AppError(
+      `Nao foi possivel cancelar o Pix anterior na SumUp, entao nao gerei outro (evita o cliente pagar dois). ${error.message}`,
+      502,
+    );
+  }
+}
+
+/**
  * Formata a cobranca com os dados do Pix para a tela.
  * @param {object} cobranca
  * @returns {object}
@@ -344,11 +366,13 @@ async function gerarPix(cobrancaId, { novo = false } = {}) {
   }
 
   // Antes de gerar outro, confere se o Pix atual ja foi pago.
+  let statusAnterior = null;
   if (cobranca.sumupCheckoutId) {
     const conferido = await conferirCheckout(cobranca.sumupCheckoutId).catch(() => null);
     if (conferido?.baixado) {
       throw new AppError("Esta cobranca acabou de ser paga pelo Pix SumUp.", 409);
     }
+    statusAnterior = conferido?.status ?? null;
   }
 
   const aindaValido =
@@ -361,6 +385,12 @@ async function gerarPix(cobrancaId, { novo = false } = {}) {
 
   if (aindaValido) {
     return respostaPix(cobranca);
+  }
+
+  // Vai gerar um Pix novo: cancela o anterior na SumUp para o cliente nao
+  // conseguir pagar os dois.
+  if (cobranca.sumupCheckoutId && !["EXPIRED", "FAILED"].includes(statusAnterior)) {
+    await desativarCheckout(config.apiKey, cobranca.sumupCheckoutId);
   }
 
   const merchantCode = config.merchantCode || (await lerConta(config.apiKey)).merchantCode;
@@ -443,9 +473,18 @@ async function executarConferencia(checkoutId) {
   const config = await getConfigAtiva();
   const checkout = await chamarSumup(config.apiKey, `/v0.1/checkouts/${encodeURIComponent(checkoutId)}`);
 
-  const cobranca = await prisma.machinePayCobranca.findUnique({
+  let cobranca = await prisma.machinePayCobranca.findUnique({
     where: { sumupCheckoutId: String(checkoutId) },
   });
+
+  // Pix antigo pago depois de gerado um novo: a referencia (mp-c<id>-...)
+  // ainda aponta a cobranca certa.
+  const idDaReferencia = /^mp-c(\d+)-/.exec(checkout?.checkout_reference || "")?.[1];
+  if (!cobranca && idDaReferencia) {
+    cobranca = await prisma.machinePayCobranca.findUnique({
+      where: { id: Number(idDaReferencia) },
+    });
+  }
 
   if (!cobranca) {
     return { status: checkout?.status, baixado: false, cobrancaId: null };
@@ -518,35 +557,42 @@ async function receberWebhook(token, body = {}) {
 
 /**
  * Confere os Pix em aberto ainda dentro da validade (ou vencidos ha pouco),
- * para o caso de algum webhook nao ter chegado.
- * @returns {Promise<number>} Quantidade de baixas feitas.
+ * para o caso de algum webhook nao ter chegado. Com todos, confere todo Pix
+ * de cobranca em aberto (botao "Verificar Pix pagos").
+ * @param {{ todos?: boolean }} opcoes
+ * @returns {Promise<{ conferidos: number, baixas: number, pagos: string[], falhas: number }>}
  */
-async function conferirPixPendentes() {
+async function conferirPixPendentes({ todos = false } = {}) {
   const config = await lerConfig();
   if (!config?.ativo || !config.apiKey) {
-    return 0;
+    if (todos) {
+      throw new AppError("A integracao SumUp esta desativada. Configure na aba Integrações.", 409);
+    }
+    return { conferidos: 0, baixas: 0, pagos: [], falhas: 0 };
   }
 
   const pendentes = await prisma.machinePayCobranca.findMany({
     where: {
       status: "PENDENTE",
       sumupCheckoutId: { not: null },
-      pixValidoAte: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      ...(todos ? {} : { pixValidoAte: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } }),
     },
-    select: { sumupCheckoutId: true },
-    take: 200,
+    select: { sumupCheckoutId: true, cliente: { select: { nome: true } } },
+    take: todos ? 1000 : 200,
   });
 
-  let baixas = 0;
-  for (const { sumupCheckoutId } of pendentes) {
+  const pagos = [];
+  let falhas = 0;
+  for (const { sumupCheckoutId, cliente } of pendentes) {
     try {
       const r = await conferirCheckout(sumupCheckoutId);
-      if (r.baixado) baixas += 1;
+      if (r.baixado) pagos.push(cliente.nome);
     } catch (error) {
+      falhas += 1;
       console.error(`[sumup] conferencia ${sumupCheckoutId} falhou:`, error.message);
     }
   }
-  return baixas;
+  return { conferidos: pendentes.length, baixas: pagos.length, pagos, falhas };
 }
 
 /**

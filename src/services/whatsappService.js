@@ -195,11 +195,11 @@ async function getConexao() {
   try {
     return { configurado: true, estado: await lerEstadoConexao(config) };
   } catch (error) {
-    return {
-      configurado: true,
-      estado: error.httpStatus === 404 ? "inexistente" : "erro",
-      erro: error.message,
-    };
+    // Instancia ainda nao criada nao e erro: ela e criada ao conectar.
+    if (error.httpStatus === 404) {
+      return { configurado: true, estado: "inexistente" };
+    }
+    return { configurado: true, estado: "erro", erro: error.message };
   }
 }
 

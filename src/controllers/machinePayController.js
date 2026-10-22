@@ -95,6 +95,7 @@ module.exports = {
     201,
   ),
   verificarPix: handler((req) => sumupService.verificarPix(req.params.id)),
+  conferirPixPagos: handler(() => sumupService.conferirPixPendentes({ todos: true })),
   getConfigWhatsapp: handler(() => whatsappService.getConfig()),
   updateConfigWhatsapp: handler((req) =>
     whatsappService.updateConfig(req.body, req.user),
