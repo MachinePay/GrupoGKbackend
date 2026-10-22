@@ -1,3 +1,4 @@
+const { Prisma } = require("@prisma/client");
 const prisma = require("../config/prisma");
 const AppError = require("../middlewares/appError");
 const movimentacaoService = require("./movimentacaoService");
@@ -8,6 +9,7 @@ const CAMPO_POR_TIPO_MAQUINA = {
   PROPRIA: "maquinasProprias",
   PLANO36: "maquinasPlano36",
   OFF: "maquinasOff",
+  PARCERIA: "maquinasParceria",
 };
 
 /**
@@ -77,8 +79,13 @@ function calcularValorCliente(cliente) {
   const plano36 = Number(cliente.maquinasPlano36 || 0);
   const valor = decimalToNumber(cliente.valorMensalidade) || 0;
   const valor36 = decimalToNumber(cliente.valorMensalidade36) || 0;
+  // Maquinas de parceria: sem cobranca por padrao, ou valor combinado por maquina.
+  const parceria = Number(cliente.maquinasParceria || 0);
+  const valorParceria = decimalToNumber(cliente.valorMensalidadeParceria) || 0;
 
-  return Math.round((proprias * valor + plano36 * valor36) * 100) / 100;
+  return (
+    Math.round((proprias * valor + plano36 * valor36 + parceria * valorParceria) * 100) / 100
+  );
 }
 
 /**
@@ -118,10 +125,12 @@ function normalizeCliente(cliente) {
     ...dados,
     valorMensalidade: decimalToNumber(cliente.valorMensalidade),
     valorMensalidade36: decimalToNumber(cliente.valorMensalidade36),
+    valorMensalidadeParceria: decimalToNumber(cliente.valorMensalidadeParceria),
     valorFixo: decimalToNumber(cliente.valorFixo),
     totalMaquinas:
       Number(cliente.maquinasProprias || 0) +
-      Number(cliente.maquinasPlano36 || 0),
+      Number(cliente.maquinasPlano36 || 0) +
+      Number(cliente.maquinasParceria || 0),
     valorCalculado: calcularValorCliente(cliente),
   };
 }
@@ -142,6 +151,7 @@ function normalizeCobranca(cobranca) {
     ...cobranca,
     valorMensalidade: decimalToNumber(cobranca.valorMensalidade),
     valorMensalidade36: decimalToNumber(cobranca.valorMensalidade36),
+    valorMensalidadeParceria: decimalToNumber(cobranca.valorMensalidadeParceria),
     valor: decimalToNumber(cobranca.valor),
     valorPago: decimalToNumber(cobranca.valorPago),
     situacao,
@@ -180,13 +190,13 @@ function mapClientePayload(payload, parcial = false) {
     data.diaVencimento = dia;
   }
 
-  for (const campo of ["maquinasProprias", "maquinasPlano36", "maquinasOff"]) {
+  for (const campo of ["maquinasProprias", "maquinasPlano36", "maquinasOff", "maquinasParceria"]) {
     if (payload[campo] !== undefined) {
       data[campo] = Math.trunc(parseNumero(payload[campo], 0));
     }
   }
 
-  for (const campo of ["valorMensalidade", "valorMensalidade36"]) {
+  for (const campo of ["valorMensalidade", "valorMensalidade36", "valorMensalidadeParceria"]) {
     if (payload[campo] !== undefined) {
       data[campo] = parseNumero(payload[campo], 0);
     }
@@ -198,6 +208,11 @@ function mapClientePayload(payload, parcial = false) {
 
   if (payload.semMensalidade !== undefined) {
     data.semMensalidade = Boolean(payload.semMensalidade);
+  }
+
+  if (payload.agrupadoComId !== undefined) {
+    const alvo = Number(payload.agrupadoComId);
+    data.agrupadoComId = payload.agrupadoComId && Number.isInteger(alvo) && alvo > 0 ? alvo : null;
   }
 
   if (payload.status !== undefined) {
@@ -293,14 +308,55 @@ async function listClientes() {
 }
 
 /**
+ * Valida "cobrar junto com": um nivel so (o responsavel nao pode estar
+ * agrupado com outro, e quem ja e responsavel nao pode ser agrupado).
+ * @param {number|null} clienteId Cliente sendo salvo (null no cadastro novo).
+ * @param {number|null} responsavelId
+ */
+async function validarAgrupamento(clienteId, responsavelId) {
+  if (!responsavelId) {
+    return;
+  }
+  if (clienteId && responsavelId === clienteId) {
+    throw new AppError("O cliente nao pode ser cobrado junto com ele mesmo.", 400);
+  }
+
+  const responsavel = await prisma.machinePayCliente.findUnique({
+    where: { id: responsavelId },
+    select: { nome: true, agrupadoComId: true },
+  });
+  if (!responsavel) {
+    throw new AppError("Cliente responsavel pela cobranca nao encontrado.", 404);
+  }
+  if (responsavel.agrupadoComId) {
+    throw new AppError(
+      `${responsavel.nome} ja e cobrado junto com outro cliente. Escolha o responsavel principal.`,
+      400,
+    );
+  }
+
+  if (clienteId) {
+    const dependentes = await prisma.machinePayCliente.count({
+      where: { agrupadoComId: clienteId },
+    });
+    if (dependentes) {
+      throw new AppError(
+        "Este cliente ja e responsavel por outras cobrancas e nao pode ser agrupado com outro.",
+        400,
+      );
+    }
+  }
+}
+
+/**
  * Cria cliente.
  * @param {object} payload
  * @returns {Promise<object>}
  */
 async function createCliente(payload) {
-  const cliente = await prisma.machinePayCliente.create({
-    data: mapClientePayload(payload),
-  });
+  const data = mapClientePayload(payload);
+  await validarAgrupamento(null, data.agrupadoComId);
+  const cliente = await prisma.machinePayCliente.create({ data });
 
   return normalizeCliente(cliente);
 }
@@ -314,6 +370,9 @@ async function createCliente(payload) {
 async function updateCliente(id, payload, user) {
   const atual = await getClienteOrFail(id);
   const data = mapClientePayload(payload, true);
+  if (data.agrupadoComId !== undefined) {
+    await validarAgrupamento(atual.id, data.agrupadoComId);
+  }
   const ajustes = Object.entries(CAMPO_POR_TIPO_MAQUINA)
     .filter(
       ([, campo]) => data[campo] !== undefined && data[campo] !== atual[campo],
@@ -381,23 +440,36 @@ async function ajustarMaquinas(id, payload = {}, user) {
 
     if (payload.aplicarNaCompetencia && payload.tipo !== "OFF") {
       const competencia = validarCompetencia(payload.aplicarNaCompetencia);
-      const cobranca = await tx.machinePayCobranca.findUnique({
+      let cobranca = await tx.machinePayCobranca.findUnique({
         where: {
           clienteId_competencia: { clienteId: atual.id, competencia },
         },
       });
-
-      if (cobranca && cobranca.status === "PENDENTE") {
-        await tx.machinePayCobranca.update({
-          where: { id: cobranca.id },
-          data: {
-            maquinasProprias: atualizado.maquinasProprias,
-            maquinasPlano36: atualizado.maquinasPlano36,
-            valorMensalidade: atualizado.valorMensalidade,
-            valorMensalidade36: atualizado.valorMensalidade36,
-            valor: calcularValorCliente(atualizado),
+      // Cliente cobrado junto com o responsavel: a cobranca e a dele.
+      if (!cobranca && atual.agrupadoComId) {
+        const doResponsavel = await tx.machinePayCobranca.findUnique({
+          where: {
+            clienteId_competencia: { clienteId: atual.agrupadoComId, competencia },
           },
         });
+        if (doResponsavel?.itens?.some?.((item) => item.clienteId === atual.id)) {
+          cobranca = doResponsavel;
+        }
+      }
+
+      if (cobranca && cobranca.status === "PENDENTE") {
+        const idsItens = Array.isArray(cobranca.itens)
+          ? cobranca.itens.map((item) => item.clienteId)
+          : [cobranca.clienteId];
+        const membros = await tx.machinePayCliente.findMany({
+          where: { id: { in: idsItens } },
+        });
+        const titular = membros.find((m) => m.id === cobranca.clienteId) || atualizado;
+        const dados = dadosCobrancaGrupo(
+          titular,
+          [titular, ...membros.filter((m) => m.id !== titular.id)],
+        );
+        await tx.machinePayCobranca.update({ where: { id: cobranca.id }, data: dados });
       }
     }
 
@@ -546,7 +618,8 @@ function resumirCobrancas(cobrancas) {
 
     resumo.quantidade += 1;
     resumo.previsto += cobranca.valor;
-    resumo.maquinas += cobranca.maquinasProprias + cobranca.maquinasPlano36;
+    resumo.maquinas +=
+      cobranca.maquinasProprias + cobranca.maquinasPlano36 + (cobranca.maquinasParceria || 0);
 
     if (cobranca.status === "PAGO") {
       resumo.recebido += cobranca.valorPago ?? cobranca.valor;
@@ -590,6 +663,12 @@ async function getCompetencia(competencia) {
 
   const normalizadas = cobrancas.map(normalizeCobranca);
   const comCobranca = new Set(normalizadas.map((item) => item.clienteId));
+  // Clientes cobrados dentro da cobranca de um responsavel.
+  for (const cobranca of normalizadas) {
+    for (const item of Array.isArray(cobranca.itens) ? cobranca.itens : []) {
+      comCobranca.add(item.clienteId);
+    }
+  }
 
   return {
     competencia: comp,
@@ -648,6 +727,62 @@ async function updateConfig(payload = {}, user) {
 }
 
 /**
+ * Monta os dados da cobranca do responsavel somando os clientes do grupo.
+ * Com um cliente so, e a cobranca normal (sem itens).
+ * @param {object} responsavel
+ * @param {object[]} membros Clientes cobrados nesta cobranca (inclui o responsavel).
+ * @returns {object}
+ */
+function dadosCobrancaGrupo(responsavel, membros) {
+  const soma = (campo) => membros.reduce((a, m) => a + Number(m[campo] || 0), 0);
+  const valor = Math.round(membros.reduce((a, m) => a + calcularValorCliente(m), 0) * 100) / 100;
+
+  return {
+    maquinasProprias: soma("maquinasProprias"),
+    maquinasPlano36: soma("maquinasPlano36"),
+    maquinasParceria: soma("maquinasParceria"),
+    valorMensalidade: responsavel.valorMensalidade,
+    valorMensalidade36: responsavel.valorMensalidade36,
+    valorMensalidadeParceria: responsavel.valorMensalidadeParceria,
+    valor,
+    itens:
+      membros.length > 1
+        ? membros.map((m) => ({
+            clienteId: m.id,
+            nome: m.nome,
+            maquinas:
+              Number(m.maquinasProprias || 0) +
+              Number(m.maquinasPlano36 || 0) +
+              Number(m.maquinasParceria || 0),
+            valor: calcularValorCliente(m),
+          }))
+        : Prisma.DbNull,
+  };
+}
+
+/**
+ * Separa os clientes ativos em grupos de cobranca. O agrupamento so vale
+ * quando o responsavel esta ativo; senao cada um e cobrado sozinho.
+ * @param {object[]} ativos
+ * @returns {Map<number, object[]>} responsavelId -> membros
+ */
+function agruparClientes(ativos) {
+  const porId = new Map(ativos.map((c) => [c.id, c]));
+  const grupos = new Map();
+  for (const cliente of ativos) {
+    const responsavelId =
+      cliente.agrupadoComId && porId.has(cliente.agrupadoComId) ? cliente.agrupadoComId : cliente.id;
+    if (!grupos.has(responsavelId)) grupos.set(responsavelId, []);
+    grupos.get(responsavelId).push(cliente);
+  }
+  // Responsavel primeiro na lista de itens.
+  for (const [id, membros] of grupos) {
+    membros.sort((a, b) => (a.id === id ? -1 : b.id === id ? 1 : a.nome.localeCompare(b.nome)));
+  }
+  return grupos;
+}
+
+/**
  * Gera cobrancas da competencia para clientes ativos que ainda nao tem.
  * @param {string} competencia
  * @returns {Promise<{ geradas: number }>}
@@ -663,25 +798,39 @@ async function gerarCobrancas(competencia) {
     );
   }
 
-  const clientes = await prisma.machinePayCliente.findMany({
-    where: { status: "ATIVO", cobrancas: { none: { competencia: comp } } },
+  const ativos = await prisma.machinePayCliente.findMany({
+    where: { status: "ATIVO" },
+    include: { cobrancas: { where: { competencia: comp }, select: { id: true } } },
   });
 
-  const data = clientes
-    .map((cliente) => ({
-      clienteId: cliente.id,
-      competencia: comp,
-      vencimento: montarVencimento(comp, cliente.diaVencimento),
-      maquinasProprias: cliente.maquinasProprias,
-      maquinasPlano36: cliente.maquinasPlano36,
-      valorMensalidade: cliente.valorMensalidade,
-      valorMensalidade36: cliente.valorMensalidade36,
-      valor: calcularValorCliente(cliente),
-    }))
-    .filter((item) => item.valor > 0);
+  const data = [];
+  for (const [responsavelId, grupo] of agruparClientes(ativos)) {
+    const responsavel = grupo.find((c) => c.id === responsavelId);
+    // Quem ja tem cobranca no mes (gerada antes do agrupamento) fica de fora.
+    const membros = grupo.filter((c) => !c.cobrancas.length);
+    if (!membros.length) continue;
+
+    // Responsavel ja cobrado no mes: os novos do grupo saem sozinhos,
+    // para ninguem ficar sem cobranca.
+    const lotes = responsavel.cobrancas.length
+      ? membros.map((m) => [m, [m]])
+      : [[responsavel, membros]];
+
+    for (const [titular, itens] of lotes) {
+      data.push({
+        clienteId: titular.id,
+        competencia: comp,
+        vencimento: montarVencimento(comp, titular.diaVencimento),
+        ...dadosCobrancaGrupo(titular, itens),
+      });
+    }
+  }
+
+  // Sem valor (sem mensalidade, sem maquinas) nao gera cobranca.
+  const aGerar = data.filter((item) => item.valor > 0);
 
   const resultado = await prisma.machinePayCobranca.createMany({
-    data,
+    data: aGerar,
     skipDuplicates: true,
   });
 
@@ -915,6 +1064,7 @@ async function getEvolucao(meses = 6) {
       vencimento: true,
       maquinasProprias: true,
       maquinasPlano36: true,
+      maquinasParceria: true,
     },
   });
 

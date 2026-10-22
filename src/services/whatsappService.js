@@ -276,8 +276,27 @@ function diasDeAtraso(vencimento) {
  * @param {boolean} comPixSumup
  * @returns {string}
  */
+/**
+ * Detalhe dos clientes quando a cobranca junta varios (vazio se for um so).
+ * @param {object} cobranca
+ * @returns {string}
+ */
+function detalharItens(cobranca) {
+  const itens = Array.isArray(cobranca.itens) ? cobranca.itens : [];
+  if (itens.length < 2) return "";
+  return (
+    "Cobrança unificada:\n" +
+    itens
+      .map((i) => `   • ${i.nome}: ${i.maquinas} ${i.maquinas === 1 ? "equipamento" : "equipamentos"} · ${formatarMoeda(i.valor)}`)
+      .join("\n") +
+    "\n\n"
+  );
+}
+
 function montarMensagem(cobranca, comPixSumup, pixValidoAte = null) {
-  const maquinas = cobranca.maquinasProprias + cobranca.maquinasPlano36;
+  const maquinas =
+    cobranca.maquinasProprias + cobranca.maquinasPlano36 + (cobranca.maquinasParceria || 0);
+  const detalhe = detalharItens(cobranca);
   const dia = new Date(cobranca.vencimento).getUTCDate();
   const dias = diasDeAtraso(cobranca.vencimento);
   const pagamento = comPixSumup
@@ -295,6 +314,7 @@ function montarMensagem(cobranca, comPixSumup, pixValidoAte = null) {
       `▪️ Equipamentos ativos: ${maquinas}\n` +
       `▪️ Valor total: ${formatarMoeda(cobranca.valor)}\n` +
       `▪️ Vencimento: dia ${dia}\n\n` +
+      detalhe +
       "⚠️ Evite o bloqueio do cadastro e a suspensão dos serviços. Pedimos que regularize o pagamento para manter seus equipamentos conectados à MachinePay.\n\n" +
       pagamento +
       "Se precisar de ajuda para regularizar, fale com a nossa equipe.\n\n" +
@@ -309,6 +329,7 @@ function montarMensagem(cobranca, comPixSumup, pixValidoAte = null) {
     `▪️ Equipamentos ativos: ${maquinas}\n` +
     `▪️ Valor total: ${formatarMoeda(cobranca.valor)}\n` +
     `▪️ Vencimento: dia ${dia}\n\n` +
+    detalhe +
     pagamento +
     "Agradecemos pela parceria! Estamos à disposição para ajudar.\n\n" +
     "Equipe Financeira | MachinePay"

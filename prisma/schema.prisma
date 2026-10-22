@@ -321,8 +321,10 @@ model MachinePayCliente {
   maquinasProprias   Int                       @default(0) @map("maquinas_proprias")
   maquinasPlano36    Int                       @default(0) @map("maquinas_plano36")
   maquinasOff        Int                       @default(0) @map("maquinas_off")
+  maquinasParceria   Int                       @default(0) @map("maquinas_parceria")
   valorMensalidade   Decimal                   @default(40) @map("valor_mensalidade") @db.Decimal(14, 2)
   valorMensalidade36 Decimal                   @default(0) @map("valor_mensalidade36") @db.Decimal(14, 2)
+  valorMensalidadeParceria Decimal             @default(0) @map("valor_mensalidade_parceria") @db.Decimal(14, 2)
   valorFixo          Decimal?                  @map("valor_fixo") @db.Decimal(14, 2)
   semMensalidade     Boolean                   @default(false) @map("sem_mensalidade")
   maquinasOnInativas Int                       @default(0) @map("maquinas_on_inativas")
@@ -332,6 +334,10 @@ model MachinePayCliente {
   painelUsrId        String?                   @unique @map("painel_usr_id")
   painelRevenda      String?                   @map("painel_revenda")
   painelSincronizadoEm DateTime?               @map("painel_sincronizado_em")
+  // Cobranca agrupada: este cliente e cobrado junto com o responsavel.
+  agrupadoComId      Int?                      @map("agrupado_com_id")
+  agrupadoCom        MachinePayCliente?        @relation("AgrupamentoCobranca", fields: [agrupadoComId], references: [id], onDelete: SetNull)
+  agrupados          MachinePayCliente[]       @relation("AgrupamentoCobranca")
   cobrancas          MachinePayCobranca[]
   ajustesMaquinas    MachinePayAjusteMaquina[]
   maquinas           MachinePayMaquina[]
@@ -371,6 +377,8 @@ model MachinePayCobranca {
   maquinasPlano36    Int                      @default(0) @map("maquinas_plano36")
   valorMensalidade   Decimal                  @default(0) @map("valor_mensalidade") @db.Decimal(14, 2)
   valorMensalidade36 Decimal                  @default(0) @map("valor_mensalidade36") @db.Decimal(14, 2)
+  maquinasParceria   Int                      @default(0) @map("maquinas_parceria")
+  valorMensalidadeParceria Decimal            @default(0) @map("valor_mensalidade_parceria") @db.Decimal(14, 2)
   valor              Decimal                  @db.Decimal(14, 2)
   status             MachinePayStatusCobranca @default(PENDENTE)
   valorPago          Decimal?                 @map("valor_pago") @db.Decimal(14, 2)
@@ -378,6 +386,8 @@ model MachinePayCobranca {
   formaPagamento     String?                  @map("forma_pagamento")
   movimentacaoId     Int?                     @map("movimentacao_id")
   observacoes        String?
+  // Detalhe por cliente quando a cobranca junta varios clientes.
+  itens              Json?
   sumupCheckoutId    String?                  @unique @map("sumup_checkout_id")
   sumupReferencia    String?                  @map("sumup_referencia")
   pixCopiaCola       String?                  @map("pix_copia_cola")
@@ -452,6 +462,7 @@ enum MachinePayTipoMaquina {
   PROPRIA
   PLANO36
   OFF
+  PARCERIA
 }
 
 enum MachinePayStatusCliente {

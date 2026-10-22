@@ -436,10 +436,12 @@ async function aplicarCliente(existente, cliente, agora, anteriores, verificarVe
 
   const maquinas = mesclarVendas(cliente.maquinas, anteriores, verificarVendas);
   const contagem = contarMaquinas(maquinas);
+  // Plano 36 e parceria sao marcados no GK: saem das ligadas e ficam como estao.
   const plano36 = existente?.maquinasPlano36 || 0;
+  const parceria = existente?.maquinasParceria || 0;
   const data = {
     ...dadosBase,
-    maquinasProprias: Math.max(0, contagem.ligadas - plano36),
+    maquinasProprias: Math.max(0, contagem.ligadas - plano36 - parceria),
     maquinasOff: contagem.off,
     maquinasOnInativas: contagem.onInativas,
     maquinasOnInativas60: contagem.onInativas60,
