@@ -414,10 +414,12 @@ function mesclarVendas(maquinas, anteriores, verificarVendas) {
 // Precos (mensalidade, plano 36, valor combinado), dia de vencimento e status
 // nunca vem do painel: sao do GK. Cliente novo entra com o padrao do banco
 // (R$ 40 por maquina) e o valor e editado depois no cadastro.
+// Nome e telefone vem do painel so no cadastro novo (ou se estiverem vazios):
+// o que for editado no GK nao e sobrescrito pela sincronizacao.
 async function aplicarCliente(existente, cliente, agora, anteriores, verificarVendas) {
   const dadosBase = {
-    nome: cliente.nome,
-    telefone: cliente.telefone || existente?.telefone || null,
+    nome: existente?.nome || cliente.nome,
+    telefone: existente?.telefone || cliente.telefone || null,
     painelUsrId: cliente.usrId,
     painelRevenda: cliente.revenda,
   };
