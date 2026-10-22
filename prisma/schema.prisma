@@ -329,6 +329,7 @@ model MachinePayCliente {
   status             MachinePayStatusCliente   @default(ATIVO)
   observacoes        String?
   painelUsrId        String?                   @unique @map("painel_usr_id")
+  painelRevenda      String?                   @map("painel_revenda")
   painelSincronizadoEm DateTime?               @map("painel_sincronizado_em")
   cobrancas          MachinePayCobranca[]
   ajustesMaquinas    MachinePayAjusteMaquina[]

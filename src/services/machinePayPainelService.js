@@ -7,7 +7,23 @@ const AppError = require("../middlewares/appError");
 // "Dispositivos Cadastrados" (maquinas.php?acao=maquinas&usr=ID).
 
 const DEFAULT_PAINEL_URL = "https://www.cyberpix.com.br/pix-adesivo-clientes/";
-const REVENDA_MACHINE_PAY = "machine pay";
+// Revendas importadas (nome do logo na coluna Revenda, sem acento/caixa),
+// clientes avulsos sem revenda no painel e clientes que nunca entram, pelo ID
+// do cliente. Sobrescreva com MACHINE_PAY_REVENDAS, MACHINE_PAY_CLIENTES_EXTRAS
+// e MACHINE_PAY_CLIENTES_EXCLUIDOS (separados por virgula).
+const REVENDAS_PADRAO = ["machine pay", "clube kids", "star toys"];
+const CLIENTES_EXTRAS_PADRAO = [
+  "8608594957041174", // Raquel Nazareth De Moura
+  "1978392500848855", // Toyland
+];
+const CLIENTES_EXCLUIDOS_PADRAO = [
+  "1073992392451816", // Pj Plush (pedro Cosso), revenda Clube Kids
+];
+
+function listaDoEnv(nome, padrao) {
+  const valor = process.env[nome];
+  return valor ? valor.split(",").map((item) => item.trim()).filter(Boolean) : padrao;
+}
 // Avisos de maquina ON sem venda: 30+ dias (vendeu entre 30 e 60 dias atras)
 // e 60+ dias (nenhuma venda em todo o periodo que o painel guarda, ~60 dias).
 const DIAS_SEM_VENDA_INATIVA = 30;
@@ -133,8 +149,10 @@ function parsearClientes(html) {
     const nome = linha.match(
       /cliente-empresa\.png[^>]*>\s*<strong>([\s\S]*?)<\/strong>/,
     )?.[1];
+    // Celula da revenda: <div margin-bottom:10px><img alt="Nome da revenda">
+    // (o tamanho do logo muda de uma revenda para outra).
     const revenda = linha.match(
-      /<img src="[^"]+" alt="([^"]+)" style="width: ?110px;?"/,
+      /<div style="margin-bottom: ?10px;?">\s*<img src="[^"]+" alt="([^"]+)"/,
     )?.[1];
     const telefone = linha.match(/wa\.me\/(\d+)/)?.[1] || null;
 
@@ -301,7 +319,8 @@ async function emLotes(itens, tamanho, fn) {
 }
 
 /**
- * Le o painel inteiro: clientes da revenda Machine Pay e as maquinas de cada um.
+ * Le o painel inteiro: clientes das revendas importadas (e os avulsos) e as
+ * maquinas de cada um.
  * @returns {Promise<{ clientes: Array<object>, ignorados: number, falhas: Array<object> }>}
  */
 async function lerPainel({ verificarVendas = true } = {}) {
@@ -315,8 +334,15 @@ async function lerPainel({ verificarVendas = true } = {}) {
     );
   }
 
+  const revendas = new Set(listaDoEnv("MACHINE_PAY_REVENDAS", REVENDAS_PADRAO).map(normalizar));
+  const extras = new Set(listaDoEnv("MACHINE_PAY_CLIENTES_EXTRAS", CLIENTES_EXTRAS_PADRAO));
+  const excluidos = new Set(
+    listaDoEnv("MACHINE_PAY_CLIENTES_EXCLUIDOS", CLIENTES_EXCLUIDOS_PADRAO),
+  );
   const daRevenda = todos.filter(
-    (cliente) => normalizar(cliente.revenda) === REVENDA_MACHINE_PAY,
+    (cliente) =>
+      !excluidos.has(cliente.usrId) &&
+      (revendas.has(normalizar(cliente.revenda)) || extras.has(cliente.usrId)),
   );
   const agora = new Date();
   const leituras = await emLotes(daRevenda, CONCORRENCIA, async (cliente) => {
@@ -398,6 +424,7 @@ async function aplicarCliente(existente, cliente, agora, anteriores, verificarVe
     nome: cliente.nome,
     telefone: cliente.telefone || existente?.telefone || null,
     painelUsrId: cliente.usrId,
+    painelRevenda: cliente.revenda,
   };
 
   if (!cliente.maquinas) {
