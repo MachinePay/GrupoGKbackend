@@ -384,6 +384,10 @@ model MachinePayCobranca {
   pixQrUrl           String?                  @map("pix_qr_url")
   pixGeradoEm        DateTime?                @map("pix_gerado_em")
   pixValidoAte       DateTime?                @map("pix_valido_ate")
+  whatsappStatus     String?                  @map("whatsapp_status")
+  whatsappEnviadoEm  DateTime?                @map("whatsapp_enviado_em")
+  whatsappErro       String?                  @map("whatsapp_erro")
+  whatsappNaFilaEm   DateTime?                @map("whatsapp_na_fila_em")
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
 
@@ -429,6 +433,19 @@ model MachinePaySumupConfig {
   updatedAt      DateTime @updatedAt
 
   @@map("machinepay_sumup_config")
+}
+
+model MachinePayWhatsappConfig {
+  id                Int      @id @default(1)
+  ativo             Boolean  @default(false)
+  evolutionUrl      String?  @map("evolution_url")
+  apiKey            String?  @map("api_key")
+  instancia         String?
+  intervaloSegundos Int      @default(20) @map("intervalo_segundos")
+  updatedBy         String?  @map("updated_by")
+  updatedAt         DateTime @updatedAt
+
+  @@map("machinepay_whatsapp_config")
 }
 
 enum MachinePayTipoMaquina {

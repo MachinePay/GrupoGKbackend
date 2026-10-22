@@ -34,4 +34,14 @@ router.get("/sumup/config", machinePayController.getConfigSumup);
 router.put("/sumup/config", authorize("ADMIN"), machinePayController.updateConfigSumup);
 router.post("/sumup/testar", authorize("ADMIN"), machinePayController.testarSumup);
 
+// WhatsApp (Evolution API): configurar e conectar o numero so administradores;
+// enviar cobrancas, financeiro e administradores.
+router.get("/whatsapp/config", machinePayController.getConfigWhatsapp);
+router.put("/whatsapp/config", authorize("ADMIN"), machinePayController.updateConfigWhatsapp);
+router.get("/whatsapp/conexao", machinePayController.getConexaoWhatsapp);
+router.post("/whatsapp/conectar", authorize("ADMIN"), machinePayController.conectarWhatsapp);
+router.get("/whatsapp/fila", machinePayController.getFilaWhatsapp);
+router.post("/whatsapp/enviar", authorize("FINANCEIRO"), machinePayController.enviarWhatsapp);
+router.post("/whatsapp/cancelar", authorize("FINANCEIRO"), machinePayController.cancelarFilaWhatsapp);
+
 module.exports = router;

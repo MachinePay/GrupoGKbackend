@@ -1,6 +1,7 @@
 const machinePayService = require("../services/machinePayService");
 const machinePayPainelService = require("../services/machinePayPainelService");
 const sumupService = require("../services/sumupService");
+const whatsappService = require("../services/whatsappService");
 
 /**
  * Cria handler Express padrao para o service.
@@ -94,6 +95,19 @@ module.exports = {
     201,
   ),
   verificarPix: handler((req) => sumupService.verificarPix(req.params.id)),
+  getConfigWhatsapp: handler(() => whatsappService.getConfig()),
+  updateConfigWhatsapp: handler((req) =>
+    whatsappService.updateConfig(req.body, req.user),
+  ),
+  getConexaoWhatsapp: handler(() => whatsappService.getConexao()),
+  conectarWhatsapp: handler(() => whatsappService.conectar()),
+  enviarWhatsapp: handler(
+    (req) =>
+      whatsappService.enfileirar(req.body?.ids, { reenviar: Boolean(req.body?.reenviar) }),
+    202,
+  ),
+  getFilaWhatsapp: handler(() => whatsappService.getStatusFila()),
+  cancelarFilaWhatsapp: handler(() => whatsappService.cancelarFila()),
   // Rota publica chamada pela SumUp: responde 200 logo e confere em seguida.
   webhookSumup: handler(async (req) => {
     await sumupService.receberWebhook(req.params.token, req.body);
