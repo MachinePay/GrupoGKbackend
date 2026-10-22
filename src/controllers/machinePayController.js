@@ -96,6 +96,12 @@ module.exports = {
   ),
   verificarPix: handler((req) => sumupService.verificarPix(req.params.id)),
   conferirPixPagos: handler(() => sumupService.conferirPixPendentes({ todos: true })),
+  previaApagarCobrancas: handler(() => machinePayService.previaApagarCobrancas()),
+  apagarCobrancas: handler((req) =>
+    machinePayService.apagarCobrancas(req.body, {
+      antesDeApagar: sumupService.desativarPixDasCobrancas,
+    }),
+  ),
   getConfigWhatsapp: handler(() => whatsappService.getConfig()),
   updateConfigWhatsapp: handler((req) =>
     whatsappService.updateConfig(req.body, req.user),

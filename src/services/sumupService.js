@@ -596,6 +596,27 @@ async function conferirPixPendentes({ todos = false } = {}) {
 }
 
 /**
+ * Cancela na SumUp os Pix das cobrancas que vao ser apagadas, para nenhum
+ * cliente pagar um Pix que nao da mais baixa. Melhor esforco: falha so e
+ * registrada no log.
+ * @param {Array<{ status: string, sumupCheckoutId: string|null }>} cobrancas
+ */
+async function desativarPixDasCobrancas(cobrancas) {
+  const config = await lerConfig();
+  if (!config?.apiKey) {
+    return;
+  }
+  for (const c of cobrancas) {
+    if (c.status !== "PENDENTE" || !c.sumupCheckoutId) continue;
+    try {
+      await desativarCheckout(config.apiKey, c.sumupCheckoutId);
+    } catch (error) {
+      console.error(`[sumup] cancelar Pix ${c.sumupCheckoutId}:`, error.message);
+    }
+  }
+}
+
+/**
  * Agenda a conferencia periodica dos Pix em aberto.
  */
 function iniciarConferenciaAutomatica() {
@@ -615,6 +636,7 @@ module.exports = {
   conferirCheckout,
   receberWebhook,
   conferirPixPendentes,
+  desativarPixDasCobrancas,
   iniciarConferenciaAutomatica,
   extrairArtefatos,
 };

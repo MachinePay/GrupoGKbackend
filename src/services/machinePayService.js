@@ -1049,6 +1049,105 @@ async function deleteCobranca(id) {
 }
 
 /**
+ * Filtro das cobrancas que o "Apagar cobrancas" alcanca.
+ * @param {string} competencia "AAAA-MM" ou "TODAS".
+ * @param {boolean} incluirPagas
+ * @returns {object}
+ */
+function filtroApagar(competencia, incluirPagas) {
+  const where = {};
+  if (competencia !== "TODAS") {
+    where.competencia = validarCompetencia(competencia);
+  }
+  if (!incluirPagas) {
+    where.status = { not: "PAGO" };
+  }
+  return where;
+}
+
+/**
+ * Resumo do que existe por competencia, para a tela de apagar cobrancas.
+ * @returns {Promise<Array<{ competencia: string, total: number, pendentes: number, pagas: number, canceladas: number, valor: number }>>}
+ */
+async function previaApagarCobrancas() {
+  const linhas = await prisma.machinePayCobranca.groupBy({
+    by: ["competencia", "status"],
+    _count: { _all: true },
+    _sum: { valor: true },
+  });
+
+  const porCompetencia = new Map();
+  for (const linha of linhas) {
+    if (!porCompetencia.has(linha.competencia)) {
+      porCompetencia.set(linha.competencia, {
+        competencia: linha.competencia,
+        total: 0,
+        pendentes: 0,
+        pagas: 0,
+        canceladas: 0,
+        valor: 0,
+      });
+    }
+    const item = porCompetencia.get(linha.competencia);
+    const qtd = linha._count._all;
+    item.total += qtd;
+    item.valor += decimalToNumber(linha._sum.valor) || 0;
+    if (linha.status === "PAGO") item.pagas += qtd;
+    else if (linha.status === "CANCELADO") item.canceladas += qtd;
+    else item.pendentes += qtd;
+  }
+
+  return [...porCompetencia.values()]
+    .map((item) => ({ ...item, valor: Math.round(item.valor * 100) / 100 }))
+    .sort((a, b) => b.competencia.localeCompare(a.competencia));
+}
+
+/**
+ * Apaga cobrancas em lote (de um mes ou todas). Pagas so com incluirPagas:
+ * o lancamento no financeiro e removido e o saldo da conta ajustado.
+ * @param {{ competencia: string, incluirPagas?: boolean, confirmacao: string }} payload
+ * @param {{ antesDeApagar?: (cobrancas: object[]) => Promise<void> }} opcoes
+ * @returns {Promise<{ apagadas: number, lancamentosRemovidos: number }>}
+ */
+async function apagarCobrancas(payload = {}, { antesDeApagar } = {}) {
+  if (String(payload.confirmacao || "").trim().toUpperCase() !== "APAGAR") {
+    throw new AppError('Digite APAGAR para confirmar.', 400);
+  }
+
+  const where = filtroApagar(String(payload.competencia || ""), Boolean(payload.incluirPagas));
+  const cobrancas = await prisma.machinePayCobranca.findMany({
+    where,
+    select: { id: true, status: true, movimentacaoId: true, sumupCheckoutId: true },
+  });
+
+  if (!cobrancas.length) {
+    return { apagadas: 0, lancamentosRemovidos: 0 };
+  }
+
+  if (antesDeApagar) {
+    await antesDeApagar(cobrancas);
+  }
+
+  // Com lancamento no financeiro: uma por vez, estornando o saldo.
+  const comLancamento = cobrancas.filter((c) => c.movimentacaoId);
+  for (const cobranca of comLancamento) {
+    await prisma.$transaction(async (tx) => {
+      await removerLancamentoVinculado(tx, cobranca);
+      await tx.machinePayCobranca.delete({ where: { id: cobranca.id } });
+    });
+  }
+
+  const resto = await prisma.machinePayCobranca.deleteMany({
+    where: { id: { in: cobrancas.filter((c) => !c.movimentacaoId).map((c) => c.id) } },
+  });
+
+  return {
+    apagadas: comLancamento.length + resto.count,
+    lancamentosRemovidos: comLancamento.length,
+  };
+}
+
+/**
  * Evolucao previsto x recebido das ultimas competencias.
  * @param {number} meses
  * @returns {Promise<Array<object>>}
@@ -1101,5 +1200,7 @@ module.exports = {
   pagarCobranca,
   alterarStatusCobranca,
   deleteCobranca,
+  previaApagarCobrancas,
+  apagarCobrancas,
   getEvolucao,
 };

@@ -20,6 +20,9 @@ router.delete("/clientes/:id", machinePayController.deleteCliente);
 
 router.get("/cobrancas", machinePayController.getCompetencia);
 router.get("/cobrancas/evolucao", machinePayController.getEvolucao);
+// Apagar cobrancas em lote: so administradores.
+router.get("/cobrancas/apagar/previa", authorize("ADMIN"), machinePayController.previaApagarCobrancas);
+router.post("/cobrancas/apagar", authorize("ADMIN"), machinePayController.apagarCobrancas);
 router.post("/cobrancas/gerar", machinePayController.gerarCobrancas);
 router.put("/cobrancas/:id", machinePayController.updateCobranca);
 router.post("/cobrancas/:id/pagar", machinePayController.pagarCobranca);
