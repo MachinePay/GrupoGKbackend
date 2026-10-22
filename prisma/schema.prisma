@@ -325,6 +325,7 @@ model MachinePayCliente {
   valorMensalidade36 Decimal                   @default(0) @map("valor_mensalidade36") @db.Decimal(14, 2)
   valorFixo          Decimal?                  @map("valor_fixo") @db.Decimal(14, 2)
   maquinasOnInativas Int                       @default(0) @map("maquinas_on_inativas")
+  maquinasOnInativas60 Int                     @default(0) @map("maquinas_on_inativas60")
   status             MachinePayStatusCliente   @default(ATIVO)
   observacoes        String?
   painelUsrId        String?                   @unique @map("painel_usr_id")
@@ -350,6 +351,7 @@ model MachinePayMaquina {
   online        Boolean?
   ultimaVendaEm DateTime?         @map("ultima_venda_em")
   inativa       Boolean           @default(false)
+  inativa60     Boolean           @default(false) @map("inativa60")
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 

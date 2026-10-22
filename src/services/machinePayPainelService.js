@@ -8,7 +8,10 @@ const AppError = require("../middlewares/appError");
 
 const DEFAULT_PAINEL_URL = "https://www.cyberpix.com.br/pix-adesivo-clientes/";
 const REVENDA_MACHINE_PAY = "machine pay";
+// Avisos de maquina ON sem venda: 30+ dias (vendeu entre 30 e 60 dias atras)
+// e 60+ dias (nenhuma venda em todo o periodo que o painel guarda, ~60 dias).
 const DIAS_SEM_VENDA_INATIVA = 30;
+const DIAS_HISTORICO_PAINEL = 60;
 const CONCORRENCIA = 6;
 const FUSO_HORARIO = "America/Sao_Paulo";
 
@@ -201,7 +204,6 @@ function calcularUltimaVenda(texto, agora = new Date()) {
  * @returns {Array<object>}
  */
 function parsearMaquinas(html, agora = new Date()) {
-  const limite = new Date(agora - DIAS_SEM_VENDA_INATIVA * 86400000);
   const maquinas = new Map();
 
   for (const linha of String(html).split(/class="td_ops acao"/).slice(1)) {
@@ -226,8 +228,7 @@ function parsearMaquinas(html, agora = new Date()) {
         : null,
       ligada,
       online: indicador ? indicador === "on" : null,
-      ultimaVendaEm,
-      inativa: ligada && (!ultimaVendaEm || ultimaVendaEm < limite),
+      ...classificarVendas(ligada, ultimaVendaEm, agora),
     });
   }
 
@@ -235,16 +236,35 @@ function parsearMaquinas(html, agora = new Date()) {
 }
 
 /**
+ * inativa = ON sem venda nos ultimos 30 dias; inativa60 = ON sem venda em
+ * todo o historico do painel (sem data de ultima venda).
+ * @param {boolean} ligada
+ * @param {Date|null} ultimaVendaEm
+ * @param {Date} agora
+ * @returns {{ ultimaVendaEm: Date|null, inativa: boolean, inativa60: boolean }}
+ */
+function classificarVendas(ligada, ultimaVendaEm, agora) {
+  const limite = new Date(agora - DIAS_SEM_VENDA_INATIVA * 86400000);
+  const limite60 = new Date(agora - DIAS_HISTORICO_PAINEL * 86400000);
+  return {
+    ultimaVendaEm,
+    inativa: ligada && (!ultimaVendaEm || ultimaVendaEm < limite),
+    inativa60: ligada && (!ultimaVendaEm || ultimaVendaEm < limite60),
+  };
+}
+
+/**
  * A listagem so mostra "Sem vendas recentes" sem dizer a janela; o extrato
- * do caixa (acao=stats) nos ultimos 30 dias confirma. Devolve a data da venda
- * mais recente do periodo ou null.
+ * do caixa (acao=stats) dos ultimos 60 dias (tudo o que o painel guarda,
+ * inclusive vendas ja recolhidas no fechamento) confirma. Devolve a data da
+ * venda mais recente do periodo ou null.
  * @param {string} cookie
  * @param {string} posId
  * @param {Date} agora
  * @returns {Promise<Date|null>}
  */
 async function buscarUltimaVendaNoExtrato(cookie, posId, agora) {
-  const inicio = diaBrasil(new Date(agora - DIAS_SEM_VENDA_INATIVA * 86400000));
+  const inicio = diaBrasil(new Date(agora - DIAS_HISTORICO_PAINEL * 86400000));
   const fim = `${diaBrasil(agora)}T23:59`;
   const html = await buscarPagina(
     cookie,
@@ -329,8 +349,7 @@ async function lerPainel({ verificarVendas = true } = {}) {
     semVendaNaListagem.forEach((maquina, indice) => {
       const extrato = extratos[indice];
       if (extrato.ok && extrato.valor) {
-        maquina.ultimaVendaEm = extrato.valor;
-        maquina.inativa = false;
+        Object.assign(maquina, classificarVendas(maquina.ligada, extrato.valor, agora));
       } else if (!extrato.ok) {
         falhas.push({ posId: maquina.posId, erro: extrato.erro });
       }
@@ -346,6 +365,7 @@ function contarMaquinas(maquinas) {
     ligadas: ligadas.length,
     off: maquinas.length - ligadas.length,
     onInativas: ligadas.filter((m) => m.inativa).length,
+    onInativas60: ligadas.filter((m) => m.inativa60).length,
   };
 }
 
@@ -363,6 +383,7 @@ function mesclarVendas(maquinas, anteriores, verificarVendas) {
       ...maquina,
       ultimaVendaEm: anterior.ultimaVendaEm,
       inativa: maquina.ligada && anterior.inativa,
+      inativa60: maquina.ligada && anterior.inativa60,
     };
   });
 }
@@ -397,6 +418,7 @@ async function aplicarCliente(existente, cliente, agora, anteriores, verificarVe
     maquinasProprias: Math.max(0, contagem.ligadas - plano36),
     maquinasOff: contagem.off,
     maquinasOnInativas: contagem.onInativas,
+    maquinasOnInativas60: contagem.onInativas60,
     painelSincronizadoEm: agora,
   };
 
@@ -495,7 +517,7 @@ async function executarSincronizacao({ origem = "manual", verificarVendas = true
   const [existentes, maquinasAnteriores] = await Promise.all([
     prisma.machinePayCliente.findMany({ where: { painelUsrId: { not: null } } }),
     prisma.machinePayMaquina.findMany({
-      select: { posId: true, ultimaVendaEm: true, inativa: true },
+      select: { posId: true, ultimaVendaEm: true, inativa: true, inativa60: true },
     }),
   ]);
   const porUsr = new Map(existentes.map((c) => [c.painelUsrId, c]));
@@ -535,7 +557,7 @@ async function executarSincronizacao({ origem = "manual", verificarVendas = true
   }
 
   const maquinas = await prisma.machinePayMaquina.findMany({
-    select: { ligada: true, inativa: true },
+    select: { ligada: true, inativa: true, inativa60: true },
   });
   if (verificarVendas) ultimaVerificacaoVendas = agora;
   return {
