@@ -490,6 +490,14 @@ async function executarConferencia(checkoutId) {
     return { status: checkout?.status, baixado: false, cobrancaId: null };
   }
 
+  if (checkout?.status === "PAID" && cobranca.status === "ACUMULADA") {
+    // Nao deveria acontecer (o Pix e cancelado antes de somar), mas se o
+    // cliente pagou o Pix antigo, fica registrado para conferencia manual.
+    console.error(
+      `[sumup] Pix ${checkoutId} pago na cobranca ${cobranca.id}, que ja foi somada na ${cobranca.acumuladaEmId}. Confira manualmente.`,
+    );
+  }
+
   if (checkout?.status !== "PAID" || cobranca.status !== "PENDENTE") {
     return { status: checkout?.status, baixado: false, cobrancaId: cobranca.id };
   }
@@ -617,6 +625,39 @@ async function desativarPixDasCobrancas(cobrancas) {
 }
 
 /**
+ * Antes de somar cobrancas antigas na do mes novo: confere se o Pix delas
+ * foi pago (da baixa) e cancela o Pix na SumUp. So libera para somar o que
+ * nao foi pago e teve o Pix cancelado, para o cliente nunca pagar duas vezes.
+ * @param {Array<{ id: number, sumupCheckoutId: string|null }>} cobrancas
+ * @returns {Promise<Set<number>>} ids que podem ser somados
+ */
+async function liberarPixParaAcumular(cobrancas) {
+  const config = await lerConfig();
+  const liberadas = new Set();
+
+  for (const c of cobrancas) {
+    if (!c.sumupCheckoutId) {
+      liberadas.add(c.id);
+      continue;
+    }
+    if (!config?.apiKey) {
+      console.error(`[sumup] cobranca ${c.id} tem Pix mas a SumUp esta sem chave: nao somada.`);
+      continue;
+    }
+    try {
+      const conferencia = await conferirCheckout(c.sumupCheckoutId);
+      if (conferencia.baixado) continue;
+      await desativarCheckout(config.apiKey, c.sumupCheckoutId);
+      liberadas.add(c.id);
+    } catch (error) {
+      console.error(`[sumup] cobranca ${c.id} nao somada (Pix ${c.sumupCheckoutId}):`, error.message);
+    }
+  }
+
+  return liberadas;
+}
+
+/**
  * Agenda a conferencia periodica dos Pix em aberto.
  */
 function iniciarConferenciaAutomatica() {
@@ -640,6 +681,7 @@ module.exports = {
   receberWebhook,
   conferirPixPendentes,
   desativarPixDasCobrancas,
+  liberarPixParaAcumular,
   iniciarConferenciaAutomatica,
   extrairArtefatos,
 };

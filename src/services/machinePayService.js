@@ -143,7 +143,11 @@ function normalizeCliente(cliente) {
 function normalizeCobranca(cobranca) {
   let situacao = cobranca.status;
 
-  if (cobranca.status === "PENDENTE" && cobranca.vencimento < hojeUtc()) {
+  // Com meses anteriores somados ja existe valor vencido, mesmo antes do vencimento novo.
+  if (
+    cobranca.status === "PENDENTE" &&
+    (cobranca.vencimento < hojeUtc() || (decimalToNumber(cobranca.valorAnterior) || 0) > 0)
+  ) {
     situacao = "ATRASADO";
   }
 
@@ -154,9 +158,68 @@ function normalizeCobranca(cobranca) {
     valorMensalidadeParceria: decimalToNumber(cobranca.valorMensalidadeParceria),
     valor: decimalToNumber(cobranca.valor),
     valorPago: decimalToNumber(cobranca.valorPago),
+    valorAnterior: decimalToNumber(cobranca.valorAnterior) || 0,
+    valorMes: arredondar((decimalToNumber(cobranca.valor) || 0) - (decimalToNumber(cobranca.valorAnterior) || 0)),
+    mesesAnteriores: cobranca.mesesAnteriores || 0,
+    anteriores: Array.isArray(cobranca.anteriores) ? cobranca.anteriores : [],
     situacao,
     cliente: cobranca.cliente ? normalizeCliente(cobranca.cliente) : undefined,
   };
+}
+
+function arredondar(valor) {
+  return Math.round(Number(valor || 0) * 100) / 100;
+}
+
+/**
+ * Meses que uma cobranca carrega para a proxima quando e somada nela:
+ * os meses que ela ja trazia mais o proprio mes (so o valor do mes).
+ * @param {object} cobranca
+ * @returns {Array<{ competencia: string, vencimento: string, valor: number, clienteId: number }>}
+ */
+function mesesCarregados(cobranca) {
+  const anteriores = Array.isArray(cobranca.anteriores) ? cobranca.anteriores : [];
+  const valorMes = arredondar(
+    (decimalToNumber(cobranca.valor) || 0) - (decimalToNumber(cobranca.valorAnterior) || 0),
+  );
+  return [
+    ...anteriores,
+    {
+      competencia: cobranca.competencia,
+      vencimento: new Date(cobranca.vencimento).toISOString(),
+      valor: valorMes,
+      clienteId: cobranca.clienteId,
+    },
+  ];
+}
+
+/**
+ * Volta para "em aberto" as cobrancas que tinham sido somadas nas cobrancas
+ * indicadas (quando a cobranca nova e apagada ou cancelada).
+ * @param {object} tx
+ * @param {number[]} ids
+ * @returns {Promise<number>}
+ */
+async function marcarDestinoAcumuladas(cobrancas) {
+  const ids = [...new Set(cobrancas.filter((c) => c.acumuladaEmId).map((c) => c.acumuladaEmId))];
+  if (!ids.length) return cobrancas;
+  const destinos = await prisma.machinePayCobranca.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, competencia: true },
+  });
+  const porId = new Map(destinos.map((d) => [d.id, d.competencia]));
+  return cobrancas.map((c) =>
+    c.acumuladaEmId ? { ...c, acumuladaEmCompetencia: porId.get(c.acumuladaEmId) || null } : c,
+  );
+}
+
+async function restaurarAcumuladas(tx, ids) {
+  if (!ids.length) return 0;
+  const r = await tx.machinePayCobranca.updateMany({
+    where: { acumuladaEmId: { in: ids }, status: "ACUMULADA" },
+    data: { status: "PENDENTE", acumuladaEmId: null },
+  });
+  return r.count;
 }
 
 /**
@@ -257,16 +320,24 @@ function calcularFinanceiroCliente(cobrancas = []) {
 
     if (cobranca.status === "PENDENTE") {
       const valor = decimalToNumber(cobranca.valor) || 0;
+      const valorAnterior = decimalToNumber(cobranca.valorAnterior) || 0;
+      const anteriores = Array.isArray(cobranca.anteriores) ? cobranca.anteriores : [];
       valorEmAberto += valor;
 
+      // Meses anteriores somados nesta cobranca ja estao vencidos.
+      const vencimentos = anteriores.map((a) => new Date(a.vencimento));
       if (cobranca.vencimento < hoje) {
         valorAtrasado += valor;
-        cobrancasAtrasadas += 1;
-        if (
-          !vencimentoMaisAntigo ||
-          cobranca.vencimento < vencimentoMaisAntigo
-        ) {
-          vencimentoMaisAntigo = cobranca.vencimento;
+        cobrancasAtrasadas += 1 + (cobranca.mesesAnteriores || 0);
+        vencimentos.push(cobranca.vencimento);
+      } else if (valorAnterior > 0) {
+        valorAtrasado += valorAnterior;
+        cobrancasAtrasadas += cobranca.mesesAnteriores || 0;
+      }
+
+      for (const vencimento of vencimentos) {
+        if (!vencimentoMaisAntigo || vencimento < vencimentoMaisAntigo) {
+          vencimentoMaisAntigo = vencimento;
         }
       }
     }
@@ -296,7 +367,15 @@ async function listClientes() {
     include: {
       cobrancas: {
         where: { status: { in: ["PAGO", "PENDENTE"] } },
-        select: { status: true, valor: true, vencimento: true, pagoEm: true },
+        select: {
+          status: true,
+          valor: true,
+          vencimento: true,
+          pagoEm: true,
+          valorAnterior: true,
+          mesesAnteriores: true,
+          anteriores: true,
+        },
       },
     },
   });
@@ -545,7 +624,7 @@ async function getHistoricoCliente(id) {
       ...normalizeCliente(cliente),
       ...calcularFinanceiroCliente(cobrancas),
     },
-    cobrancas: cobrancas.map(normalizeCobranca),
+    cobrancas: await marcarDestinoAcumuladas(cobrancas.map(normalizeCobranca)),
     ajustes,
     maquinas,
   };
@@ -609,14 +688,18 @@ function resumirCobrancas(cobrancas) {
     qtdPendentes: 0,
     qtdAtrasadas: 0,
     maquinas: 0,
+    valorAnterior: 0,
+    qtdComAtrasoSomado: 0,
   };
 
   for (const cobranca of cobrancas) {
-    if (cobranca.status === "CANCELADO") {
+    if (cobranca.status === "CANCELADO" || cobranca.status === "ACUMULADA") {
       continue;
     }
 
     resumo.quantidade += 1;
+    resumo.valorAnterior += cobranca.valorAnterior || 0;
+    if (cobranca.mesesAnteriores > 0 && cobranca.status === "PENDENTE") resumo.qtdComAtrasoSomado += 1;
     resumo.previsto += cobranca.valor;
     resumo.maquinas +=
       cobranca.maquinasProprias + cobranca.maquinasPlano36 + (cobranca.maquinasParceria || 0);
@@ -628,13 +711,15 @@ function resumirCobrancas(cobrancas) {
       resumo.emAberto += cobranca.valor;
       resumo.qtdPendentes += 1;
       if (cobranca.situacao === "ATRASADO") {
-        resumo.atrasado += cobranca.valor;
+        // Antes do vencimento novo, so a parte dos meses anteriores esta atrasada.
+        const venceu = new Date(cobranca.vencimento) < hojeUtc();
+        resumo.atrasado += venceu ? cobranca.valor : cobranca.valorAnterior || 0;
         resumo.qtdAtrasadas += 1;
       }
     }
   }
 
-  for (const chave of ["previsto", "recebido", "emAberto", "atrasado"]) {
+  for (const chave of ["previsto", "recebido", "emAberto", "atrasado", "valorAnterior"]) {
     resumo[chave] = Math.round(resumo[chave] * 100) / 100;
   }
 
@@ -661,7 +746,7 @@ async function getCompetencia(competencia) {
     }),
   ]);
 
-  const normalizadas = cobrancas.map(normalizeCobranca);
+  const normalizadas = await marcarDestinoAcumuladas(cobrancas.map(normalizeCobranca));
   const comCobranca = new Set(normalizadas.map((item) => item.clienteId));
   // Clientes cobrados dentro da cobranca de um responsavel.
   for (const cobranca of normalizadas) {
@@ -784,10 +869,14 @@ function agruparClientes(ativos) {
 
 /**
  * Gera cobrancas da competencia para clientes ativos que ainda nao tem.
+ * O que ficou em aberto e ja venceu em meses anteriores entra somado na
+ * cobranca nova (a antiga vira ACUMULADA), para cobrar tudo junto.
  * @param {string} competencia
- * @returns {Promise<{ geradas: number }>}
+ * @param {{ liberarParaAcumular?: (cobrancas: object[]) => Promise<Set<number>> }} opcoes
+ *   Confere/cancela o Pix das cobrancas antigas; devolve as que podem ser somadas.
+ * @returns {Promise<{ geradas: number, comAtrasoSomado: number, valorSomado: number, naoSomadas: number }>}
  */
-async function gerarCobrancas(competencia) {
+async function gerarCobrancas(competencia, { liberarParaAcumular } = {}) {
   const comp = validarCompetencia(competencia);
   const config = await getConfig();
 
@@ -818,23 +907,102 @@ async function gerarCobrancas(competencia) {
 
     for (const [titular, itens] of lotes) {
       data.push({
-        clienteId: titular.id,
-        competencia: comp,
-        vencimento: montarVencimento(comp, titular.diaVencimento),
-        ...dadosCobrancaGrupo(titular, itens),
+        clienteIds: itens.map((m) => m.id),
+        registro: {
+          clienteId: titular.id,
+          competencia: comp,
+          vencimento: montarVencimento(comp, titular.diaVencimento),
+          ...dadosCobrancaGrupo(titular, itens),
+        },
       });
     }
   }
 
-  // Sem valor (sem mensalidade, sem maquinas) nao gera cobranca.
-  const aGerar = data.filter((item) => item.valor > 0);
+  // Em aberto de meses anteriores, ja vencido, dos clientes que vao ser cobrados.
+  const idsClientes = data.flatMap((d) => d.clienteIds);
+  const abertas = idsClientes.length
+    ? await prisma.machinePayCobranca.findMany({
+        where: {
+          clienteId: { in: idsClientes },
+          status: "PENDENTE",
+          competencia: { lt: comp },
+          vencimento: { lt: hojeUtc() },
+        },
+        orderBy: [{ competencia: "asc" }, { id: "asc" }],
+      })
+    : [];
+
+  const liberadas = abertas.length && liberarParaAcumular
+    ? await liberarParaAcumular(abertas)
+    : new Set(abertas.map((c) => c.id));
+
+  const abertasPorCliente = new Map();
+  for (const cobranca of abertas) {
+    if (!liberadas.has(cobranca.id)) continue;
+    if (!abertasPorCliente.has(cobranca.clienteId)) abertasPorCliente.set(cobranca.clienteId, []);
+    abertasPorCliente.get(cobranca.clienteId).push(cobranca);
+  }
+
+  for (const item of data) {
+    const antigas = item.clienteIds.flatMap((id) => abertasPorCliente.get(id) || []);
+    item.antigas = antigas;
+    if (!antigas.length) continue;
+
+    const meses = antigas
+      .flatMap(mesesCarregados)
+      .sort((x, y) => x.competencia.localeCompare(y.competencia));
+    const valorAnterior = arredondar(antigas.reduce((a, c) => a + (decimalToNumber(c.valor) || 0), 0));
+    Object.assign(item.registro, {
+      valor: arredondar(item.registro.valor + valorAnterior),
+      valorAnterior,
+      mesesAnteriores: new Set(meses.map((m) => m.competencia)).size,
+      anteriores: meses,
+    });
+  }
+
+  // Sem valor (sem mensalidade, sem maquinas e nada em aberto) nao gera cobranca.
+  const aGerar = data.filter((item) => item.registro.valor > 0);
+  const simples = aGerar.filter((item) => !item.antigas.length);
+  const somadas = aGerar.filter((item) => item.antigas.length);
 
   const resultado = await prisma.machinePayCobranca.createMany({
-    data: aGerar,
+    data: simples.map((item) => item.registro),
     skipDuplicates: true,
   });
 
-  return { geradas: resultado.count };
+  if (somadas.length) {
+    await prisma.$transaction(
+      async (tx) => {
+        for (const item of somadas) {
+          const nova = await tx.machinePayCobranca.create({ data: item.registro });
+          await tx.machinePayCobranca.updateMany({
+            where: { id: { in: item.antigas.map((c) => c.id) }, status: "PENDENTE" },
+            data: {
+              status: "ACUMULADA",
+              acumuladaEmId: nova.id,
+              // O Pix antigo ja foi cancelado; a cobranca nova gera o dela.
+              sumupCheckoutId: null,
+              sumupReferencia: null,
+              pixCopiaCola: null,
+              pixQrUrl: null,
+              pixGeradoEm: null,
+              pixValidoAte: null,
+              whatsappStatus: null,
+              whatsappNaFilaEm: null,
+            },
+          });
+        }
+      },
+      { timeout: 120000 },
+    );
+  }
+
+  return {
+    geradas: resultado.count + somadas.length,
+    comAtrasoSomado: somadas.length,
+    valorSomado: arredondar(somadas.reduce((a, item) => a + item.registro.valorAnterior, 0)),
+    naoSomadas: abertas.length - liberadas.size,
+  };
 }
 
 /**
@@ -1009,8 +1177,18 @@ async function pagarCobranca(id, payload = {}, user) {
 async function alterarStatusCobranca(id, status) {
   const atual = await getCobrancaOrFail(id);
 
+  if (atual.status === "ACUMULADA") {
+    throw new AppError(
+      "Esta cobranca foi somada na cobranca do mes seguinte. Altere a cobranca nova.",
+      409,
+    );
+  }
+
   const cobranca = await prisma.$transaction(async (tx) => {
     await removerLancamentoVinculado(tx, atual);
+    if (status === "CANCELADO") {
+      await restaurarAcumuladas(tx, [atual.id]);
+    }
 
     return tx.machinePayCobranca.update({
       where: { id: Number(id) },
@@ -1044,6 +1222,7 @@ async function deleteCobranca(id) {
 
   await prisma.$transaction(async (tx) => {
     await removerLancamentoVinculado(tx, atual);
+    await restaurarAcumuladas(tx, [atual.id]);
     await tx.machinePayCobranca.delete({ where: { id: Number(id) } });
   });
 }
@@ -1085,6 +1264,7 @@ async function previaApagarCobrancas() {
         pendentes: 0,
         pagas: 0,
         canceladas: 0,
+        acumuladas: 0,
         valor: 0,
       });
     }
@@ -1094,6 +1274,7 @@ async function previaApagarCobrancas() {
     item.valor += decimalToNumber(linha._sum.valor) || 0;
     if (linha.status === "PAGO") item.pagas += qtd;
     else if (linha.status === "CANCELADO") item.canceladas += qtd;
+    else if (linha.status === "ACUMULADA") item.acumuladas += qtd;
     else item.pendentes += qtd;
   }
 
@@ -1128,6 +1309,13 @@ async function apagarCobrancas(payload = {}, { antesDeApagar } = {}) {
     await antesDeApagar(cobrancas);
   }
 
+  // Somadas numa cobranca que vai ser apagada (e que ficam) voltam a ficar em aberto.
+  const idsApagar = cobrancas.map((c) => c.id);
+  await prisma.machinePayCobranca.updateMany({
+    where: { acumuladaEmId: { in: idsApagar }, status: "ACUMULADA", id: { notIn: idsApagar } },
+    data: { status: "PENDENTE", acumuladaEmId: null },
+  });
+
   // Com lancamento no financeiro: uma por vez, estornando o saldo.
   const comLancamento = cobrancas.filter((c) => c.movimentacaoId);
   for (const cobranca of comLancamento) {
@@ -1154,7 +1342,7 @@ async function apagarCobrancas(payload = {}, { antesDeApagar } = {}) {
  */
 async function getEvolucao(meses = 6) {
   const cobrancas = await prisma.machinePayCobranca.findMany({
-    where: { status: { not: "CANCELADO" } },
+    where: { status: { notIn: ["CANCELADO", "ACUMULADA"] } },
     select: {
       competencia: true,
       status: true,

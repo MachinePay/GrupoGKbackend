@@ -388,6 +388,12 @@ model MachinePayCobranca {
   observacoes        String?
   // Detalhe por cliente quando a cobranca junta varios clientes.
   itens              Json?
+  // Meses anteriores nao pagos somados nesta cobranca (valor ja incluso em valor).
+  valorAnterior      Decimal                  @default(0) @map("valor_anterior") @db.Decimal(14, 2)
+  mesesAnteriores    Int                      @default(0) @map("meses_anteriores")
+  anteriores         Json?
+  // Em cobranca ACUMULADA: a cobranca nova em que ela foi somada.
+  acumuladaEmId      Int?                     @map("acumulada_em_id")
   sumupCheckoutId    String?                  @unique @map("sumup_checkout_id")
   sumupReferencia    String?                  @map("sumup_referencia")
   pixCopiaCola       String?                  @map("pix_copia_cola")
@@ -403,6 +409,7 @@ model MachinePayCobranca {
 
   @@unique([clienteId, competencia])
   @@index([competencia, status])
+  @@index([acumuladaEmId])
   @@map("machinepay_cobrancas")
 }
 
@@ -490,4 +497,5 @@ enum MachinePayStatusCobranca {
   PENDENTE
   PAGO
   CANCELADO
+  ACUMULADA
 }

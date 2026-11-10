@@ -64,7 +64,10 @@ module.exports = {
     machinePayService.getCompetencia(req.query.competencia),
   ),
   gerarCobrancas: handler(
-    (req) => machinePayService.gerarCobrancas(req.body?.competencia),
+    (req) =>
+      machinePayService.gerarCobrancas(req.body?.competencia, {
+        liberarParaAcumular: sumupService.liberarPixParaAcumular,
+      }),
     201,
   ),
   updateCobranca: handler((req) =>

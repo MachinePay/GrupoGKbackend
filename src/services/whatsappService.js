@@ -293,12 +293,60 @@ function detalharItens(cobranca) {
   );
 }
 
+const NOMES_MESES = [
+  "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+  "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+];
+
+function nomeCompetencia(competencia) {
+  const [ano, mes] = String(competencia).split("-").map(Number);
+  return `${NOMES_MESES[mes - 1]}/${ano}`;
+}
+
+/**
+ * Meses anteriores somados na cobranca, agrupados por mes.
+ * @param {object} cobranca
+ * @returns {Array<{ competencia: string, valor: number, vencimento: string }>}
+ */
+function mesesSomados(cobranca) {
+  const porMes = new Map();
+  for (const item of Array.isArray(cobranca.anteriores) ? cobranca.anteriores : []) {
+    const atual = porMes.get(item.competencia) || { competencia: item.competencia, valor: 0, vencimento: item.vencimento };
+    atual.valor += Number(item.valor || 0);
+    if (new Date(item.vencimento) < new Date(atual.vencimento)) atual.vencimento = item.vencimento;
+    porMes.set(item.competencia, atual);
+  }
+  return [...porMes.values()].sort((a, b) => a.competencia.localeCompare(b.competencia));
+}
+
+/**
+ * Linhas de valor: com meses em aberto somados, mostra cada mes, a
+ * mensalidade atual e o total.
+ * @param {object} cobranca
+ * @returns {string}
+ */
+function linhasValor(cobranca) {
+  const meses = mesesSomados(cobranca);
+  if (!meses.length) {
+    return `▪️ Valor total: ${formatarMoeda(cobranca.valor)}\n`;
+  }
+  const valorMes = Number(cobranca.valor) - Number(cobranca.valorAnterior || 0);
+  return (
+    meses.map((m) => `▪️ Em aberto de ${nomeCompetencia(m.competencia)}: ${formatarMoeda(m.valor)}\n`).join("") +
+    `▪️ Mensalidade de ${nomeCompetencia(cobranca.competencia)}: ${formatarMoeda(valorMes)}\n` +
+    `▪️ Valor total: ${formatarMoeda(cobranca.valor)}\n`
+  );
+}
+
 function montarMensagem(cobranca, comPixSumup, pixValidoAte = null) {
   const maquinas =
     cobranca.maquinasProprias + cobranca.maquinasPlano36 + (cobranca.maquinasParceria || 0);
   const detalhe = detalharItens(cobranca);
   const dia = new Date(cobranca.vencimento).getUTCDate();
-  const dias = diasDeAtraso(cobranca.vencimento);
+  const somados = mesesSomados(cobranca);
+  // Com meses somados, o atraso conta do vencimento mais antigo em aberto.
+  const dias = diasDeAtraso(somados.length ? somados[0].vencimento : cobranca.vencimento);
+  const qtdMeses = somados.length;
   const pagamento = comPixSumup
     ? "💳 Pagamento via Pix\nO código Pix copia e cola vem na próxima mensagem. A baixa é automática, não precisa enviar comprovante. ✅\n" +
       (pixValidoAte
@@ -307,12 +355,15 @@ function montarMensagem(cobranca, comPixSumup, pixValidoAte = null) {
     : `💳 Pagamento via Pix\nChave CNPJ:\n${CHAVE_PIX_CNPJ}\n\nApós o pagamento, envie o comprovante por este WhatsApp para confirmarmos a baixa.\n\n`;
 
   if (dias > 0) {
+    const abertura = qtdMeses
+      ? `Identificamos ${qtdMeses} ${qtdMeses === 1 ? "mensalidade" : "mensalidades"} em aberto, com ${dias} ${dias === 1 ? "dia" : "dias"} de atraso. Somamos tudo nesta cobrança:\n\n`
+      : `Identificamos que a mensalidade abaixo permanece em aberto, com ${dias} ${dias === 1 ? "dia" : "dias"} de atraso:\n\n`;
     return (
       "Olá! Tudo bem?\n\n" +
       "MachinePay | Financeiro\n\n" +
-      `Identificamos que a mensalidade abaixo permanece em aberto, com ${dias} ${dias === 1 ? "dia" : "dias"} de atraso:\n\n` +
+      abertura +
       `▪️ Equipamentos ativos: ${maquinas}\n` +
-      `▪️ Valor total: ${formatarMoeda(cobranca.valor)}\n` +
+      linhasValor(cobranca) +
       `▪️ Vencimento: dia ${dia}\n\n` +
       detalhe +
       "⚠️ Evite o bloqueio do cadastro e a suspensão dos serviços. Pedimos que regularize o pagamento para manter seus equipamentos conectados à MachinePay.\n\n" +
@@ -327,7 +378,7 @@ function montarMensagem(cobranca, comPixSumup, pixValidoAte = null) {
     "MachinePay | Financeiro\n\n" +
     "Segue a sua mensalidade:\n\n" +
     `▪️ Equipamentos ativos: ${maquinas}\n` +
-    `▪️ Valor total: ${formatarMoeda(cobranca.valor)}\n` +
+    linhasValor(cobranca) +
     `▪️ Vencimento: dia ${dia}\n\n` +
     detalhe +
     pagamento +
