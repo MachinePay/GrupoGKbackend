@@ -1,6 +1,7 @@
 const app = require("./app");
 const env = require("./config/env");
 const machinePayPainelService = require("./services/machinePayPainelService");
+const compactpayService = require("./services/compactpayService");
 const sumupService = require("./services/sumupService");
 const whatsappService = require("./services/whatsappService");
 
@@ -14,6 +15,7 @@ function startServer() {
   });
 
   machinePayPainelService.iniciarSincronizacaoAutomatica();
+  compactpayService.iniciarSincronizacaoAutomatica();
   sumupService.iniciarConferenciaAutomatica();
   whatsappService.iniciarFila();
 }

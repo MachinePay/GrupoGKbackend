@@ -334,6 +334,15 @@ model MachinePayCliente {
   painelUsrId        String?                   @unique @map("painel_usr_id")
   painelRevenda      String?                   @map("painel_revenda")
   painelSincronizadoEm DateTime?               @map("painel_sincronizado_em")
+  // Machine Pay ou CompactPay: cada produto tem seus clientes e cobrancas.
+  produto            MachinePayProduto         @default(MACHINEPAY)
+  // cliente_id do CompactPay (sincronizacao pelo endpoint de mensalidades).
+  compactpayId       String?                   @unique @map("compactpay_id")
+  compactpaySincronizadoEm DateTime?           @map("compactpay_sincronizado_em")
+  // Outros valores por maquina: [{ valor, quantidade, descricao }].
+  faixas             Json?
+  // Valores editados no GK: a sincronizacao do CompactPay nao sobrescreve.
+  valoresPersonalizados Boolean                @default(false) @map("valores_personalizados")
   // Cobranca agrupada: este cliente e cobrado junto com o responsavel.
   agrupadoComId      Int?                      @map("agrupado_com_id")
   agrupadoCom        MachinePayCliente?        @relation("AgrupamentoCobranca", fields: [agrupadoComId], references: [id], onDelete: SetNull)
@@ -345,6 +354,7 @@ model MachinePayCliente {
   updatedAt          DateTime                  @updatedAt
 
   @@index([status])
+  @@index([produto, status])
   @@map("machinepay_clientes")
 }
 
@@ -425,6 +435,29 @@ model MachinePayAjusteMaquina {
 
   @@index([clienteId, createdAt])
   @@map("machinepay_ajustes_maquinas")
+}
+
+// Configuracao por produto: cobranca ligada, marca e chave Pix das mensagens
+// e conexao com o sistema de origem (CompactPay).
+model MachinePayProdutoConfig {
+  produto        MachinePayProduto @id
+  cobrancaAtiva  Boolean           @default(false) @map("cobranca_ativa")
+  marca          String
+  chavePix       String?           @map("chave_pix")
+  integracaoUrl  String?           @map("integracao_url")
+  integracaoKey  String?           @map("integracao_key")
+  // Modelos das mensagens (vazio = texto padrao).
+  mensagemLembrete String?         @map("mensagem_lembrete")
+  mensagemAtraso   String?         @map("mensagem_atraso")
+  updatedBy      String?           @map("updated_by")
+  updatedAt      DateTime          @updatedAt
+
+  @@map("machinepay_produto_config")
+}
+
+enum MachinePayProduto {
+  MACHINEPAY
+  COMPACTPAY
 }
 
 model MachinePayConfig {

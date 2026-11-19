@@ -409,7 +409,7 @@ async function gerarPix(cobrancaId, { novo = false } = {}) {
       amount: valor,
       currency: "BRL",
       merchant_code: merchantCode,
-      description: `Machine Pay ${cobranca.competencia} - ${cobranca.cliente.nome}`.slice(0, 255),
+      description: `${machinePayService.PRODUTOS[cobranca.cliente.produto]?.nome || "Machine Pay"} ${cobranca.competencia} - ${cobranca.cliente.nome}`.slice(0, 255),
       valid_until: validoAte.toISOString(),
       ...(webhookUrl ? { return_url: webhookUrl } : {}),
     },

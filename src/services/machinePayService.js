@@ -4,6 +4,54 @@ const AppError = require("../middlewares/appError");
 const movimentacaoService = require("./movimentacaoService");
 
 const STATUS_CLIENTE = ["ATIVO", "SUSPENSO", "INATIVO"];
+// Machine Pay e CompactPay usam o mesmo modulo, separados por produto.
+const PRODUTOS = {
+  MACHINEPAY: { nome: "Machine Pay", empresa: "MachinePay", marca: "MachinePay" },
+  COMPACTPAY: { nome: "CompactPay", empresa: "CompactPay", marca: "CompactPay" },
+};
+const CHAVE_PIX_PADRAO = "59996204000177";
+// Campos de valor: editados no GK num cliente do CompactPay, a sincronizacao
+// deixa de sobrescrever (valores personalizados).
+const CAMPOS_VALOR = [
+  "valorMensalidade",
+  "valorMensalidade36",
+  "valorMensalidadeParceria",
+  "valorFixo",
+  "faixas",
+  "semMensalidade",
+];
+
+/**
+ * Valida o produto (padrao Machine Pay).
+ * @param {string} produto
+ * @returns {"MACHINEPAY"|"COMPACTPAY"}
+ */
+function validarProduto(produto) {
+  const valor = String(produto || "MACHINEPAY").toUpperCase();
+  if (!PRODUTOS[valor]) {
+    throw new AppError("Produto invalido.", 400);
+  }
+  return valor;
+}
+
+/**
+ * Faixas de valor do cliente ([{ valor, quantidade, descricao }]).
+ * @param {object} cliente
+ * @returns {Array<{ valor: number, quantidade: number, descricao: string|null }>}
+ */
+function faixasDoCliente(cliente) {
+  return (Array.isArray(cliente?.faixas) ? cliente.faixas : [])
+    .map((f) => ({
+      valor: Number(f.valor) || 0,
+      quantidade: Math.max(0, Math.trunc(Number(f.quantidade) || 0)),
+      descricao: f.descricao ? String(f.descricao) : null,
+    }))
+    .filter((f) => f.quantidade > 0);
+}
+
+function maquinasEmFaixas(cliente) {
+  return faixasDoCliente(cliente).reduce((a, f) => a + f.quantidade, 0);
+}
 const COMPETENCIA_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
 const CAMPO_POR_TIPO_MAQUINA = {
   PROPRIA: "maquinasProprias",
@@ -78,13 +126,17 @@ function calcularValorCliente(cliente) {
   const proprias = Number(cliente.maquinasProprias || 0);
   const plano36 = Number(cliente.maquinasPlano36 || 0);
   const valor = decimalToNumber(cliente.valorMensalidade) || 0;
+  // Maquinas com valor diferente do padrao (faixas vindas do CompactPay ou do GK).
+  const totalFaixas = faixasDoCliente(cliente).reduce((a, f) => a + f.valor * f.quantidade, 0);
   const valor36 = decimalToNumber(cliente.valorMensalidade36) || 0;
   // Maquinas de parceria: sem cobranca por padrao, ou valor combinado por maquina.
   const parceria = Number(cliente.maquinasParceria || 0);
   const valorParceria = decimalToNumber(cliente.valorMensalidadeParceria) || 0;
 
   return (
-    Math.round((proprias * valor + plano36 * valor36 + parceria * valorParceria) * 100) / 100
+    Math.round(
+      (proprias * valor + plano36 * valor36 + parceria * valorParceria + totalFaixas) * 100,
+    ) / 100
   );
 }
 
@@ -127,10 +179,12 @@ function normalizeCliente(cliente) {
     valorMensalidade36: decimalToNumber(cliente.valorMensalidade36),
     valorMensalidadeParceria: decimalToNumber(cliente.valorMensalidadeParceria),
     valorFixo: decimalToNumber(cliente.valorFixo),
+    faixas: faixasDoCliente(cliente),
     totalMaquinas:
       Number(cliente.maquinasProprias || 0) +
       Number(cliente.maquinasPlano36 || 0) +
-      Number(cliente.maquinasParceria || 0),
+      Number(cliente.maquinasParceria || 0) +
+      maquinasEmFaixas(cliente),
     valorCalculado: calcularValorCliente(cliente),
   };
 }
@@ -273,6 +327,18 @@ function mapClientePayload(payload, parcial = false) {
     data.semMensalidade = Boolean(payload.semMensalidade);
   }
 
+  if (payload.faixas !== undefined) {
+    if (payload.faixas !== null && !Array.isArray(payload.faixas)) {
+      throw new AppError("Faixas de valor invalidas.", 400);
+    }
+    const faixas = faixasDoCliente({ faixas: payload.faixas || [] });
+    data.faixas = faixas.length ? faixas : Prisma.DbNull;
+  }
+
+  if (payload.valoresPersonalizados !== undefined) {
+    data.valoresPersonalizados = Boolean(payload.valoresPersonalizados);
+  }
+
   if (payload.agrupadoComId !== undefined) {
     const alvo = Number(payload.agrupadoComId);
     data.agrupadoComId = payload.agrupadoComId && Number.isInteger(alvo) && alvo > 0 ? alvo : null;
@@ -361,8 +427,9 @@ function calcularFinanceiroCliente(cobrancas = []) {
  * Lista clientes Machine Pay com a situacao financeira de cada um.
  * @returns {Promise<Array<object>>}
  */
-async function listClientes() {
+async function listClientes(produto) {
   const clientes = await prisma.machinePayCliente.findMany({
+    where: { produto: validarProduto(produto) },
     orderBy: { nome: "asc" },
     include: {
       cobrancas: {
@@ -392,7 +459,7 @@ async function listClientes() {
  * @param {number|null} clienteId Cliente sendo salvo (null no cadastro novo).
  * @param {number|null} responsavelId
  */
-async function validarAgrupamento(clienteId, responsavelId) {
+async function validarAgrupamento(clienteId, responsavelId, produto) {
   if (!responsavelId) {
     return;
   }
@@ -402,10 +469,13 @@ async function validarAgrupamento(clienteId, responsavelId) {
 
   const responsavel = await prisma.machinePayCliente.findUnique({
     where: { id: responsavelId },
-    select: { nome: true, agrupadoComId: true },
+    select: { nome: true, agrupadoComId: true, produto: true },
   });
   if (!responsavel) {
     throw new AppError("Cliente responsavel pela cobranca nao encontrado.", 404);
+  }
+  if (produto && responsavel.produto !== produto) {
+    throw new AppError("So da para cobrar junto com um cliente do mesmo produto.", 400);
   }
   if (responsavel.agrupadoComId) {
     throw new AppError(
@@ -432,9 +502,9 @@ async function validarAgrupamento(clienteId, responsavelId) {
  * @param {object} payload
  * @returns {Promise<object>}
  */
-async function createCliente(payload) {
-  const data = mapClientePayload(payload);
-  await validarAgrupamento(null, data.agrupadoComId);
+async function createCliente(payload, produto) {
+  const data = { ...mapClientePayload(payload), produto: validarProduto(produto) };
+  await validarAgrupamento(null, data.agrupadoComId, data.produto);
   const cliente = await prisma.machinePayCliente.create({ data });
 
   return normalizeCliente(cliente);
@@ -450,7 +520,15 @@ async function updateCliente(id, payload, user) {
   const atual = await getClienteOrFail(id);
   const data = mapClientePayload(payload, true);
   if (data.agrupadoComId !== undefined) {
-    await validarAgrupamento(atual.id, data.agrupadoComId);
+    await validarAgrupamento(atual.id, data.agrupadoComId, atual.produto);
+  }
+  // Cliente vindo do CompactPay com valor editado aqui: o GK passa a mandar.
+  if (
+    atual.compactpayId &&
+    payload.valoresPersonalizados === undefined &&
+    CAMPOS_VALOR.some((campo) => payload[campo] !== undefined)
+  ) {
+    data.valoresPersonalizados = true;
   }
   const ajustes = Object.entries(CAMPO_POR_TIPO_MAQUINA)
     .filter(
@@ -635,12 +713,14 @@ async function getHistoricoCliente(id) {
  * @param {Array<object>} itens
  * @returns {Promise<{ criados: number, atualizados: number }>}
  */
-async function importarClientes(itens) {
+async function importarClientes(itens, produto) {
   if (!Array.isArray(itens) || !itens.length) {
     throw new AppError("Nenhum cliente para importar.", 400);
   }
+  const prod = validarProduto(produto);
 
   const existentes = await prisma.machinePayCliente.findMany({
+    where: { produto: prod },
     select: { id: true, nome: true },
   });
   const porNome = new Map(
@@ -662,7 +742,7 @@ async function importarClientes(itens) {
         });
         atualizados += 1;
       } else {
-        const criado = await tx.machinePayCliente.create({ data });
+        const criado = await tx.machinePayCliente.create({ data: { ...data, produto: prod } });
         porNome.set(data.nome.toLowerCase(), criado.id);
         criados += 1;
       }
@@ -731,17 +811,18 @@ function resumirCobrancas(cobrancas) {
  * @param {string} competencia
  * @returns {Promise<object>}
  */
-async function getCompetencia(competencia) {
+async function getCompetencia(competencia, produto) {
   const comp = validarCompetencia(competencia);
+  const prod = validarProduto(produto);
 
   const [cobrancas, clientesAtivos] = await Promise.all([
     prisma.machinePayCobranca.findMany({
-      where: { competencia: comp },
+      where: { competencia: comp, cliente: { produto: prod } },
       include: { cliente: true },
       orderBy: [{ vencimento: "asc" }, { cliente: { nome: "asc" } }],
     }),
     prisma.machinePayCliente.findMany({
-      where: { status: "ATIVO" },
+      where: { status: "ATIVO", produto: prod },
       select: { id: true },
     }),
   ]);
@@ -765,50 +846,135 @@ async function getCompetencia(competencia) {
   };
 }
 
-/**
- * Le a configuracao global do Machine Pay (padrao: cobranca desativada).
- * Tolera a tabela ainda nao migrada para nao derrubar a tela.
- * @returns {Promise<{ cobrancaAtiva: boolean, updatedBy: string|null, updatedAt: Date|null }>}
- */
-async function getConfig() {
-  try {
-    const config = await prisma.machinePayConfig.findUnique({ where: { id: 1 } });
-    return {
-      cobrancaAtiva: Boolean(config?.cobrancaAtiva),
-      updatedBy: config?.updatedBy ?? null,
-      updatedAt: config?.updatedAt ?? null,
-    };
-  } catch (error) {
-    if (error?.code === "P2021") {
-      return { cobrancaAtiva: false, updatedBy: null, updatedAt: null };
-    }
-    throw error;
-  }
+function mascararChave(chave) {
+  if (!chave) return null;
+  return chave.length <= 8 ? "••••" : `${chave.slice(0, 4)}••••${chave.slice(-4)}`;
 }
 
 /**
- * Liga ou desliga a cobranca (quando desligada, o modulo e apenas cadastro).
- * @param {{ cobrancaAtiva: boolean }} payload
- * @param {object} user
- * @returns {Promise<object>}
+ * Le a configuracao do produto, com padrao quando a linha (ou a tabela,
+ * antes da migracao) ainda nao existe.
+ * @param {string} produto
+ * @returns {Promise<object>} linha completa (inclui integracaoKey)
  */
-async function updateConfig(payload = {}, user) {
-  if (typeof payload.cobrancaAtiva !== "boolean") {
-    throw new AppError("Informe cobrancaAtiva como verdadeiro ou falso.", 400);
+async function lerConfigProduto(produto) {
+  const prod = validarProduto(produto);
+  let config = null;
+  try {
+    config = await prisma.machinePayProdutoConfig.findUnique({ where: { produto: prod } });
+  } catch (error) {
+    if (error?.code !== "P2021") throw error;
+    // Antes da migracao 021: a Machine Pay ainda usa a tabela antiga.
+    if (prod === "MACHINEPAY") {
+      const antiga = await prisma.machinePayConfig.findUnique({ where: { id: 1 } }).catch(() => null);
+      config = antiga ? { cobrancaAtiva: antiga.cobrancaAtiva, updatedBy: antiga.updatedBy, updatedAt: antiga.updatedAt } : null;
+    }
   }
 
-  const data = {
-    cobrancaAtiva: payload.cobrancaAtiva,
-    updatedBy: user?.email || null,
+  return {
+    produto: prod,
+    cobrancaAtiva: Boolean(config?.cobrancaAtiva),
+    marca: config?.marca || PRODUTOS[prod].marca,
+    chavePix: config?.chavePix || CHAVE_PIX_PADRAO,
+    integracaoUrl: config?.integracaoUrl || null,
+    integracaoKey: config?.integracaoKey || null,
+    mensagemLembrete: config?.mensagemLembrete || null,
+    mensagemAtraso: config?.mensagemAtraso || null,
+    updatedBy: config?.updatedBy ?? null,
+    updatedAt: config?.updatedAt ?? null,
   };
+}
 
-  await prisma.machinePayConfig.upsert({
-    where: { id: 1 },
-    create: { id: 1, ...data },
+/**
+ * Configuracao do produto para a tela (a chave de integracao nunca volta inteira).
+ * @param {string} produto
+ * @returns {Promise<object>}
+ */
+async function getConfig(produto) {
+  const { integracaoKey, ...config } = await lerConfigProduto(produto);
+  return {
+    ...config,
+    integracaoKeyConfigurada: Boolean(integracaoKey),
+    integracaoKeyMascarada: mascararChave(integracaoKey),
+  };
+}
+
+/**
+ * Atualiza a configuracao do produto: cobranca ligada, marca e chave Pix
+ * das mensagens e conexao com o sistema de origem. Chave vazia mantem a atual.
+ * @param {object} payload
+ * @param {object} user
+ * @param {string} produto
+ * @returns {Promise<object>}
+ */
+async function updateConfig(payload = {}, user, produto) {
+  const prod = validarProduto(produto);
+  const data = { updatedBy: user?.email || null };
+
+  if (payload.cobrancaAtiva !== undefined) {
+    if (typeof payload.cobrancaAtiva !== "boolean") {
+      throw new AppError("Informe cobrancaAtiva como verdadeiro ou falso.", 400);
+    }
+    data.cobrancaAtiva = payload.cobrancaAtiva;
+  }
+
+  if (payload.marca !== undefined) {
+    const marca = String(payload.marca || "").trim();
+    if (!marca || marca.length > 40) {
+      throw new AppError("Informe o nome que aparece nas mensagens (ate 40 letras).", 400);
+    }
+    data.marca = marca;
+  }
+
+  if (payload.chavePix !== undefined) {
+    const chave = String(payload.chavePix || "").trim();
+    if (chave.length > 120) {
+      throw new AppError("Chave Pix muito longa.", 400);
+    }
+    data.chavePix = chave || null;
+  }
+
+  if (payload.integracaoUrl !== undefined) {
+    const url = String(payload.integracaoUrl || "").trim().replace(/\/+$/, "");
+    if (url && !/^https?:\/\/[^\s/]+/i.test(url)) {
+      throw new AppError("O endereco da integracao deve comecar com https://", 400);
+    }
+    data.integracaoUrl = url || null;
+  }
+
+  if (payload.integracaoKey !== undefined && String(payload.integracaoKey).trim()) {
+    data.integracaoKey = String(payload.integracaoKey).trim();
+  }
+
+  // Modelos das mensagens: vazio volta ao texto padrao.
+  for (const campo of ["mensagemLembrete", "mensagemAtraso"]) {
+    if (payload[campo] === undefined) continue;
+    const texto = String(payload[campo] || "").replace(/\r\n/g, "\n").trim();
+    if (texto.length > 4000) {
+      throw new AppError("A mensagem pode ter no maximo 4000 caracteres.", 400);
+    }
+    data[campo] = texto || null;
+  }
+
+  const atual = await lerConfigProduto(prod);
+  await prisma.machinePayProdutoConfig.upsert({
+    where: { produto: prod },
+    create: { produto: prod, marca: atual.marca, chavePix: atual.chavePix, ...data },
     update: data,
   });
 
-  return getConfig();
+  // Mantem a tabela antiga em dia enquanto ela ainda existir.
+  if (prod === "MACHINEPAY" && data.cobrancaAtiva !== undefined) {
+    await prisma.machinePayConfig
+      .upsert({
+        where: { id: 1 },
+        create: { id: 1, cobrancaAtiva: data.cobrancaAtiva, updatedBy: data.updatedBy },
+        update: { cobrancaAtiva: data.cobrancaAtiva, updatedBy: data.updatedBy },
+      })
+      .catch(() => null);
+  }
+
+  return getConfig(prod);
 }
 
 /**
@@ -823,7 +989,7 @@ function dadosCobrancaGrupo(responsavel, membros) {
   const valor = Math.round(membros.reduce((a, m) => a + calcularValorCliente(m), 0) * 100) / 100;
 
   return {
-    maquinasProprias: soma("maquinasProprias"),
+    maquinasProprias: soma("maquinasProprias") + membros.reduce((a, m) => a + maquinasEmFaixas(m), 0),
     maquinasPlano36: soma("maquinasPlano36"),
     maquinasParceria: soma("maquinasParceria"),
     valorMensalidade: responsavel.valorMensalidade,
@@ -838,7 +1004,8 @@ function dadosCobrancaGrupo(responsavel, membros) {
             maquinas:
               Number(m.maquinasProprias || 0) +
               Number(m.maquinasPlano36 || 0) +
-              Number(m.maquinasParceria || 0),
+              Number(m.maquinasParceria || 0) +
+              maquinasEmFaixas(m),
             valor: calcularValorCliente(m),
           }))
         : Prisma.DbNull,
@@ -876,19 +1043,20 @@ function agruparClientes(ativos) {
  *   Confere/cancela o Pix das cobrancas antigas; devolve as que podem ser somadas.
  * @returns {Promise<{ geradas: number, comAtrasoSomado: number, valorSomado: number, naoSomadas: number }>}
  */
-async function gerarCobrancas(competencia, { liberarParaAcumular } = {}) {
+async function gerarCobrancas(competencia, { liberarParaAcumular, produto } = {}) {
   const comp = validarCompetencia(competencia);
-  const config = await getConfig();
+  const prod = validarProduto(produto);
+  const config = await getConfig(prod);
 
   if (!config.cobrancaAtiva) {
     throw new AppError(
-      "A cobranca do Machine Pay esta desativada. Ative-a para gerar cobrancas.",
+      `A cobranca do ${PRODUTOS[prod].nome} esta desativada. Ative-a para gerar cobrancas.`,
       409,
     );
   }
 
   const ativos = await prisma.machinePayCliente.findMany({
-    where: { status: "ATIVO" },
+    where: { status: "ATIVO", produto: prod },
     include: { cobrancas: { where: { competencia: comp }, select: { id: true } } },
   });
 
@@ -1062,13 +1230,14 @@ async function updateCobranca(id, payload) {
  * @param {object} client
  * @returns {Promise<object>}
  */
-async function getEmpresaMachinePay(client = prisma) {
+async function getEmpresaProduto(produto, client = prisma) {
+  const nome = PRODUTOS[validarProduto(produto)].empresa;
   const empresa = await client.empresa.findFirst({
-    where: { nome: { equals: "MachinePay", mode: "insensitive" } },
+    where: { nome: { equals: nome, mode: "insensitive" } },
   });
 
   if (!empresa) {
-    throw new AppError("Empresa MachinePay nao cadastrada.", 404);
+    throw new AppError(`Empresa ${nome} nao cadastrada.`, 404);
   }
 
   return empresa;
@@ -1134,7 +1303,7 @@ async function pagarCobranca(id, payload = {}, user) {
     let movimentacaoId = null;
 
     if (payload.contaDestinoId) {
-      const empresa = await getEmpresaMachinePay(tx);
+      const empresa = await getEmpresaProduto(atual.cliente.produto, tx);
       const movimentacao = await movimentacaoService.createMovimentacao(
         {
           empresaId: empresa.id,
@@ -1144,7 +1313,7 @@ async function pagarCobranca(id, payload = {}, user) {
           valor: valorPago,
           data: pagoEm.toISOString(),
           contaDestinoId: Number(payload.contaDestinoId),
-          referencia: `Machine Pay ${atual.competencia} - ${atual.cliente.nome}`,
+          referencia: `${PRODUTOS[validarProduto(atual.cliente.produto)].nome} ${atual.competencia} - ${atual.cliente.nome}`,
         },
         { tx, user },
       );
@@ -1233,8 +1402,8 @@ async function deleteCobranca(id) {
  * @param {boolean} incluirPagas
  * @returns {object}
  */
-function filtroApagar(competencia, incluirPagas) {
-  const where = {};
+function filtroApagar(competencia, incluirPagas, produto) {
+  const where = { cliente: { produto: validarProduto(produto) } };
   if (competencia !== "TODAS") {
     where.competencia = validarCompetencia(competencia);
   }
@@ -1248,9 +1417,10 @@ function filtroApagar(competencia, incluirPagas) {
  * Resumo do que existe por competencia, para a tela de apagar cobrancas.
  * @returns {Promise<Array<{ competencia: string, total: number, pendentes: number, pagas: number, canceladas: number, valor: number }>>}
  */
-async function previaApagarCobrancas() {
+async function previaApagarCobrancas(produto) {
   const linhas = await prisma.machinePayCobranca.groupBy({
     by: ["competencia", "status"],
+    where: { cliente: { produto: validarProduto(produto) } },
     _count: { _all: true },
     _sum: { valor: true },
   });
@@ -1290,12 +1460,12 @@ async function previaApagarCobrancas() {
  * @param {{ antesDeApagar?: (cobrancas: object[]) => Promise<void> }} opcoes
  * @returns {Promise<{ apagadas: number, lancamentosRemovidos: number }>}
  */
-async function apagarCobrancas(payload = {}, { antesDeApagar } = {}) {
+async function apagarCobrancas(payload = {}, { antesDeApagar, produto } = {}) {
   if (String(payload.confirmacao || "").trim().toUpperCase() !== "APAGAR") {
     throw new AppError('Digite APAGAR para confirmar.', 400);
   }
 
-  const where = filtroApagar(String(payload.competencia || ""), Boolean(payload.incluirPagas));
+  const where = filtroApagar(String(payload.competencia || ""), Boolean(payload.incluirPagas), produto);
   const cobrancas = await prisma.machinePayCobranca.findMany({
     where,
     select: { id: true, status: true, movimentacaoId: true, sumupCheckoutId: true },
@@ -1340,9 +1510,9 @@ async function apagarCobrancas(payload = {}, { antesDeApagar } = {}) {
  * @param {number} meses
  * @returns {Promise<Array<object>>}
  */
-async function getEvolucao(meses = 6) {
+async function getEvolucao(meses = 6, produto) {
   const cobrancas = await prisma.machinePayCobranca.findMany({
-    where: { status: { notIn: ["CANCELADO", "ACUMULADA"] } },
+    where: { status: { notIn: ["CANCELADO", "ACUMULADA"] }, cliente: { produto: validarProduto(produto) } },
     select: {
       competencia: true,
       status: true,
@@ -1373,6 +1543,13 @@ async function getEvolucao(meses = 6) {
 }
 
 module.exports = {
+  lerConfigProduto,
+  PRODUTOS,
+  CHAVE_PIX_PADRAO,
+  validarProduto,
+  faixasDoCliente,
+  maquinasEmFaixas,
+  calcularValorCliente,
   getConfig,
   updateConfig,
   listClientes,

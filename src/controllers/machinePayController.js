@@ -1,5 +1,6 @@
 const machinePayService = require("../services/machinePayService");
 const machinePayPainelService = require("../services/machinePayPainelService");
+const compactpayService = require("../services/compactpayService");
 const sumupService = require("../services/sumupService");
 const whatsappService = require("../services/whatsappService");
 
@@ -24,13 +25,14 @@ function handler(fn, status = 200) {
 }
 
 module.exports = {
-  getConfig: handler(() => machinePayService.getConfig()),
+  getConfig: handler((req) => machinePayService.getConfig(req.produto)),
   updateConfig: handler((req) =>
-    machinePayService.updateConfig(req.body, req.user),
+    machinePayService.updateConfig(req.body, req.user, req.produto),
   ),
-  listClientes: handler(() => machinePayService.listClientes()),
+  testarIntegracao: handler(() => compactpayService.testarConexao()),
+  listClientes: handler((req) => machinePayService.listClientes(req.produto)),
   createCliente: handler(
-    (req) => machinePayService.createCliente(req.body),
+    (req) => machinePayService.createCliente(req.body, req.produto),
     201,
   ),
   updateCliente: handler((req) =>
@@ -46,27 +48,37 @@ module.exports = {
     machinePayService.getHistoricoCliente(req.params.id),
   ),
   importarClientes: handler(
-    (req) => machinePayService.importarClientes(req.body?.clientes),
+    (req) => machinePayService.importarClientes(req.body?.clientes, req.produto),
     201,
   ),
-  getStatusPainel: handler(() =>
-    machinePayPainelService.getStatusSincronizacao(),
+  // CompactPay sincroniza pelo endpoint de mensalidades; Machine Pay pelo painel.
+  getStatusPainel: handler((req) =>
+    req.produto === "COMPACTPAY"
+      ? compactpayService.getStatusSincronizacao()
+      : machinePayPainelService.getStatusSincronizacao(),
   ),
   // A leitura completa do painel leva alguns minutos: dispara em segundo
   // plano e a tela acompanha por GET /painel/status.
-  sincronizarPainel: handler(async () => {
+  sincronizarPainel: handler(async (req) => {
+    if (req.produto === "COMPACTPAY") {
+      compactpayService
+        .sincronizar({ origem: "manual" })
+        .catch((error) => console.error("[compactpay] sync manual falhou:", error.message));
+      return compactpayService.getStatusSincronizacao();
+    }
     machinePayPainelService
       .sincronizarPainel({ origem: "manual" })
       .catch((error) => console.error("[machinepay] sync manual falhou:", error.message));
     return machinePayPainelService.getStatusSincronizacao();
   }, 202),
   getCompetencia: handler((req) =>
-    machinePayService.getCompetencia(req.query.competencia),
+    machinePayService.getCompetencia(req.query.competencia, req.produto),
   ),
   gerarCobrancas: handler(
     (req) =>
       machinePayService.gerarCobrancas(req.body?.competencia, {
         liberarParaAcumular: sumupService.liberarPixParaAcumular,
+        produto: req.produto,
       }),
     201,
   ),
@@ -86,7 +98,7 @@ module.exports = {
     machinePayService.deleteCobranca(req.params.id),
   ),
   getEvolucao: handler((req) =>
-    machinePayService.getEvolucao(req.query.meses),
+    machinePayService.getEvolucao(req.query.meses, req.produto),
   ),
   getConfigSumup: handler(() => sumupService.getConfig()),
   updateConfigSumup: handler((req) =>
@@ -99,10 +111,11 @@ module.exports = {
   ),
   verificarPix: handler((req) => sumupService.verificarPix(req.params.id)),
   conferirPixPagos: handler(() => sumupService.conferirPixPendentes({ todos: true })),
-  previaApagarCobrancas: handler(() => machinePayService.previaApagarCobrancas()),
+  previaApagarCobrancas: handler((req) => machinePayService.previaApagarCobrancas(req.produto)),
   apagarCobrancas: handler((req) =>
     machinePayService.apagarCobrancas(req.body, {
       antesDeApagar: sumupService.desativarPixDasCobrancas,
+      produto: req.produto,
     }),
   ),
   getConfigWhatsapp: handler(() => whatsappService.getConfig()),

@@ -5,7 +5,14 @@ const { authorize } = require("../middlewares/authMiddleware");
 const router = Router();
 
 router.get("/config", machinePayController.getConfig);
-router.put("/config", machinePayController.updateConfig);
+// Ligar/desligar a cobranca: financeiro; marca, chave Pix e integracao: administradores.
+router.put("/config", (req, res, next) => {
+  const sensivel = ["marca", "chavePix", "integracaoUrl", "integracaoKey", "mensagemLembrete", "mensagemAtraso"].some(
+    (campo) => req.body?.[campo] !== undefined,
+  );
+  return sensivel ? authorize("ADMIN")(req, res, next) : next();
+}, machinePayController.updateConfig);
+router.post("/config/testar-integracao", authorize("ADMIN"), machinePayController.testarIntegracao);
 
 router.get("/painel/status", machinePayController.getStatusPainel);
 router.post("/painel/sincronizar", machinePayController.sincronizarPainel);

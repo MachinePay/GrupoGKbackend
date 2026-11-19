@@ -35,7 +35,9 @@ router.use("/cadastros", cadastroRoutes);
 router.use("/integracao", integracaoRoutes);
 router.use("/fornecedores", fornecedoresRoutes);
 router.use("/selfmachine", selfMachineRoutes);
-router.use("/machinepay", machinePayRoutes);
+// Machine Pay e CompactPay: mesmas rotas, separadas pelo produto.
+router.use("/machinepay", (req, _res, next) => { req.produto = "MACHINEPAY"; next(); }, machinePayRoutes);
+router.use("/compactpay", (req, _res, next) => { req.produto = "COMPACTPAY"; next(); }, machinePayRoutes);
 router.use("/cotacoes", cotacoesRoutes);
 router.use("/sumup-contas", sumupContasRoutes);
 
