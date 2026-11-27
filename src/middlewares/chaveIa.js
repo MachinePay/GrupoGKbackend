@@ -8,7 +8,8 @@ const prisma = require("../config/prisma");
  * X-API-Key. Quem entra com ela vira o usuario "Integracao IA" (ADMIN, criado
  * na primeira chamada, com senha aleatoria: ninguem faz login com ele).
  *
- * So leitura (GET): qualquer escrita com a chave e' recusada.
+ * Acesso total, como um ADMIN: o Maestro faz o que o Gabriel e o Leo pedirem
+ * (as escritas so saem depois do "sim" deles, do lado da ia-central).
  * Desativar o usuario "Integracao IA" corta a chave.
  */
 const EMAIL_IA = "ia-central@integracao.grupogk";
@@ -21,8 +22,6 @@ function chaveIaConfere(req) {
   const b = crypto.createHash("sha256").update(esperado).digest();
   return crypto.timingSafeEqual(a, b);
 }
-
-const leituraIa = (req) => ["GET", "HEAD", "OPTIONS"].includes(req.method);
 
 let cache = null;
 async function usuarioIa() {
@@ -42,4 +41,4 @@ async function usuarioIa() {
   return usuario;
 }
 
-module.exports = { EMAIL_IA, chaveIaConfere, leituraIa, usuarioIa };
+module.exports = { EMAIL_IA, chaveIaConfere, usuarioIa };

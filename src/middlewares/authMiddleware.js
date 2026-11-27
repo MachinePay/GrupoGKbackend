@@ -1,7 +1,7 @@
 const jwt = require("jsonwebtoken");
 const env = require("../config/env");
 const AppError = require("./appError");
-const { chaveIaConfere, leituraIa, usuarioIa } = require("./chaveIa");
+const { chaveIaConfere, usuarioIa } = require("./chaveIa");
 
 /**
  * Extrai token Bearer do cabecalho Authorization.
@@ -64,11 +64,10 @@ function authenticate(req, res, next) {
 }
 
 /**
- * Entrada da IA Central pela chave X-API-Key (ver chaveIa.js): so leitura.
+ * Entrada da IA Central pela chave X-API-Key (ver chaveIa.js): acesso de ADMIN.
  */
 async function authenticateChaveIa(req, _res, next) {
   if (!chaveIaConfere(req)) return next(new AppError("Chave invalida.", 401));
-  if (!leituraIa(req)) return next(new AppError("Chave da IA so le.", 403));
   try {
     const ia = await usuarioIa();
     if (!ia.ativo) return next(new AppError("Usuario Integracao IA inativo.", 401));
